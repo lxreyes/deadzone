@@ -542,6 +542,14 @@ const player = {
   dashInvuln: 0.45,
   // EXP currency used by the upgrade tree (T key)
   exp: 0,
+  // Unlockable abilities. Each key in player.abilities is a granted ability;
+  // abilityLast holds the last-use gameTime for cooldown checks.
+  abilities: {},
+  abilityLast: {},
+  // Active-ability timers — checked by the systems they affect
+  rageTimer: 0,        // damage multiplier window
+  // bullet-time is a global slow on all zombies and lives outside the player
+  // object so it can be applied to enemies spawned after the trigger.
   buffs: { triple: 0, rapid: 0, fast: 0, shield: 0 },
   // Stacked perk effects picked from the post-wave card draw.
   // Effective values; parallel specialLevels tracks pick counts for display.
@@ -799,6 +807,25 @@ const TREE_BRANCHES = Object.keys(UPGRADE_TREE);
 // How many nodes have been bought in each branch (0 = next one available).
 let treeLevels = { combat: 0, survival: 0, economy: 0 };
 let pendingBossDeath = null; // queued boss-kill nuke processed at tick boundary
+
+// ---------- Active abilities (unlockable, on a cooldown, bound to hotkeys) ----------
+const ABILITIES = {
+  bulletTime: { name: 'Bullet Time',     key: 'KeyZ', color: '#7ec8ff', cooldown: 28, duration: 5.0,
+                desc: 'Zombies move at 30% speed' },
+  rage:       { name: 'Rage',            key: 'KeyX', color: '#d63030', cooldown: 32, duration: 6.0,
+                desc: 'Player damage x2' },
+  phase:      { name: 'Phase Walk',      key: 'KeyC', color: '#c47eff', cooldown: 18, duration: 2.5,
+                desc: 'Brief invulnerability' },
+  homing:     { name: 'Homing Bullets',  key: 'KeyV', color: '#5cffec', cooldown: 24, duration: 6.0,
+                desc: 'All bullets home for 6s' },
+  pull:       { name: 'Magnetic Pull',   key: 'KeyG', color: '#ffd166', cooldown: 30, duration: 0,
+                desc: 'Yank every zombie toward you' },
+  storm:      { name: 'Lightning Storm', key: 'KeyH', color: '#88aadd', cooldown: 45, duration: 0,
+                desc: 'Strike every zombie on screen' },
+};
+const ABILITY_KEYS = Object.keys(ABILITIES);
+let bulletTimeTimer = 0;     // zombie-speed global slow
+let homingBulletsTimer = 0;  // new bullets spawn with homing while >0
 let treeView = 'tomes';      // 'tomes' (the shop) or 'roots' (the root system)
 
 // ---------- The Tree Of Upgrade — a separate EXP tree shaped like a real tree ----------
@@ -1026,6 +1053,21 @@ const cheatSections = [
   ]},
   { id: 'audio', name: 'Audio', open: false, items: [
     { label: 'Mute', toggle: () => soundMuted, run() { soundMuted = !soundMuted; } },
+  ]},
+  { id: 'abilities', name: 'Abilities', open: false, items: [
+    { label: () => `Bullet Time [Z]: ${player.abilities.bulletTime ? 'UNLOCKED' : 'locked'}`,
+      run() { player.abilities.bulletTime = true; } },
+    { label: () => `Rage [X]: ${player.abilities.rage ? 'UNLOCKED' : 'locked'}`,
+      run() { player.abilities.rage = true; } },
+    { label: () => `Phase Walk [C]: ${player.abilities.phase ? 'UNLOCKED' : 'locked'}`,
+      run() { player.abilities.phase = true; } },
+    { label: () => `Homing Bullets [V]: ${player.abilities.homing ? 'UNLOCKED' : 'locked'}`,
+      run() { player.abilities.homing = true; } },
+    { label: () => `Magnetic Pull [G]: ${player.abilities.pull ? 'UNLOCKED' : 'locked'}`,
+      run() { player.abilities.pull = true; } },
+    { label: () => `Lightning Storm [H]: ${player.abilities.storm ? 'UNLOCKED' : 'locked'}`,
+      run() { player.abilities.storm = true; } },
+    { label: 'Unlock All', run() { for (const k of ABILITY_KEYS) player.abilities[k] = true; } },
   ]},
 ];
 
@@ -1769,6 +1811,13 @@ addEventListener('keydown', e => {
   if (e.code === 'KeyF' && nearbyBladeCrate) doSwapSecondary();
   if (e.code === 'KeyQ' && !inShop() && !pendingCards) useSecondary();
   if ((e.code === 'ShiftLeft' || e.code === 'ShiftRight') && !inShop() && !pendingCards) tryDash();
+  // ability hotkeys — fire only if unlocked and off cooldown
+  if (e.code === 'KeyZ') tryAbility('bulletTime');
+  if (e.code === 'KeyX') tryAbility('rage');
+  if (e.code === 'KeyC') tryAbility('phase');
+  if (e.code === 'KeyV') tryAbility('homing');
+  if (e.code === 'KeyG') tryAbility('pull');
+  if (e.code === 'KeyH') tryAbility('storm');
   // build-mode digit selection takes priority over shop/cheats
   if (buildMode && e.code.startsWith('Digit')) {
     const bi = ['Digit1','Digit2','Digit3','Digit4','Digit5'].indexOf(e.code);
@@ -2064,6 +2113,14 @@ function killZombie(z) {
   player.exp += z.expReward || 1;
   if (z.isBoss) {
     spawnBossChest(z.x, z.y);
+    // Boss kills also unlock a random ability the player doesn't have yet.
+    const locked = ABILITY_KEYS.filter(k => !player.abilities[k]);
+    if (locked.length) {
+      const pick = locked[Math.floor(Math.random() * locked.length)];
+      player.abilities[pick] = true;
+      const def = ABILITIES[pick];
+      floaters.push({ x: z.x, y: z.y - 40, text: `ABILITY: ${def.name}`, life: 3.0, color: def.color });
+    }
     // Queue a non-boss nuke at the boss position. We defer the actual
     // detonation to the start of the next tick so the kill site can finish
     // its iteration without the zombies array being mutated mid-loop.
@@ -2496,6 +2553,8 @@ function tryShoot(nowSec) {
       orbitAngle: isOrbit ? a : 0,
       orbitRadius: isOrbit ? w.orbitRadius : 0,
       orbitSpeed: isOrbit ? w.orbitSpeed : 0,
+      // Homing Bullets ability applies while its timer is active
+      homing: homingBulletsTimer > 0 && !isOrbit,
       isCrit,
     });
   }
@@ -2511,6 +2570,8 @@ function rollPerkedDamage(baseDmg) {
   if (player.special.berserk && player.hp / player.maxHp < 0.3) {
     dmg *= 1 + player.special.berserk;
   }
+  // Rage ability — flat x2 damage window
+  if (player.rageTimer > 0) dmg *= 2;
   const isCrit = !!(player.special.crit && Math.random() < player.special.crit);
   if (isCrit) dmg *= 2 + (player.special.critBurst || 0); // crit burst adds extra crit multiplier
   return { dmg, isCrit };
@@ -2685,6 +2746,93 @@ function updateHealFields(dt) {
       player.hp = Math.min(player.maxHp, player.hp + f.hps * dt);
     }
   }
+}
+
+// Active ability trigger. Only fires if the ability is unlocked AND off-cooldown.
+function tryAbility(id) {
+  if (pendingCards || inShop()) return;
+  if (!player.abilities[id]) return;
+  const def = ABILITIES[id];
+  if (!def) return;
+  const last = player.abilityLast[id] || -Infinity;
+  if (gameTime - last < def.cooldown) return;
+  player.abilityLast[id] = gameTime;
+  if (id === 'bulletTime') {
+    // Stamp the existing slow timer on every active zombie AND set a global
+    // timer so newly-spawned zombies also feel it.
+    bulletTimeTimer = Math.max(bulletTimeTimer, def.duration);
+    for (const z of zombies) {
+      if (!z.isDummy) z.slowTimer = Math.max(z.slowTimer || 0, def.duration);
+    }
+    for (let i = 0; i < 36; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const s = 80 + Math.random() * 140;
+      particles.push({ x: player.x, y: player.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s, life: 0.6, color: def.color });
+    }
+  } else if (id === 'rage') {
+    player.rageTimer = Math.max(player.rageTimer, def.duration);
+    flashRed = Math.max(flashRed, 0.18);
+    for (let i = 0; i < 28; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const s = 100 + Math.random() * 200;
+      particles.push({ x: player.x, y: player.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s, life: 0.5, color: def.color });
+    }
+  } else if (id === 'phase') {
+    player.invuln = Math.max(player.invuln, def.duration);
+    for (let i = 0; i < 24; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const s = 80 + Math.random() * 160;
+      particles.push({ x: player.x, y: player.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s, life: 0.55, color: def.color });
+    }
+  } else if (id === 'homing') {
+    homingBulletsTimer = Math.max(homingBulletsTimer, def.duration);
+    // retro-fit existing in-flight bullets so the effect feels instant
+    for (const b of bullets) {
+      if (!b.bulletKind || ['lightning'].indexOf(b.bulletKind) < 0) b.homing = true;
+    }
+    for (let i = 0; i < 18; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const s = 60 + Math.random() * 140;
+      particles.push({ x: player.x, y: player.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s, life: 0.5, color: def.color });
+    }
+  } else if (id === 'pull') {
+    // Yank every non-boss zombie a big chunk of the distance toward the player.
+    for (const z of zombies) {
+      if (z.isBoss || z.isDummy) continue;
+      const dx = player.x - z.x, dy = player.y - z.y;
+      const d = Math.hypot(dx, dy) || 1;
+      const pullDist = Math.min(d * 0.65, 320);
+      z.x = Math.max(z.r, Math.min(W - z.r, z.x + (dx / d) * pullDist));
+      z.y = Math.max(z.r, Math.min(H - z.r, z.y + (dy / d) * pullDist));
+    }
+    // imploding ring of particles
+    for (let i = 0; i < 48; i++) {
+      const a = (i / 48) * Math.PI * 2;
+      particles.push({
+        x: player.x + Math.cos(a) * 220, y: player.y + Math.sin(a) * 220,
+        vx: -Math.cos(a) * 280, vy: -Math.sin(a) * 280,
+        life: 0.55, color: def.color,
+      });
+    }
+    shake(10);
+  } else if (id === 'storm') {
+    // One sky-to-ground bolt + chain hits per non-boss zombie on screen.
+    for (let j = zombies.length - 1; j >= 0; j--) {
+      const z = zombies[j];
+      if (z.isBoss || z.isDummy) continue;
+      sparks.push({ x1: z.x + (Math.random() - 0.5) * 40, y1: -20, x2: z.x, y2: z.y, life: 0.28, max: 0.28 });
+      z.hp -= 40 + Math.random() * 30;
+      if (z.hp <= 0) {
+        killZombie(z);
+        zombies.splice(j, 1);
+      }
+    }
+    flashRed = Math.max(flashRed, 0.10);
+    shake(12);
+  }
+  floaters.push({ x: player.x, y: player.y - 22, text: def.name, life: 1.4, color: def.color });
+  shake(4);
+  SFX.unlock();
 }
 
 // Permanent dash — bound to Shift, gated by player.dashCooldown.
@@ -3251,6 +3399,10 @@ function updatePlayer(dt) {
   if (player.special.regen) {
     player.hp = Math.min(player.maxHp, player.hp + player.special.regen * dt);
   }
+  // Active ability timers tick down here so they affect this and next frames.
+  if (player.rageTimer > 0) player.rageTimer = Math.max(0, player.rageTimer - dt);
+  if (bulletTimeTimer > 0)  bulletTimeTimer  = Math.max(0, bulletTimeTimer  - dt);
+  if (homingBulletsTimer > 0) homingBulletsTimer = Math.max(0, homingBulletsTimer - dt);
 }
 
 function zombieCanEnter(x, y, r) {
@@ -3288,6 +3440,8 @@ function updateZombies(dt) {
       z.slowTimer -= dt;
       speedMul = Math.min(speedMul, 0.45);
     }
+    // Bullet Time ability — global slow until the timer expires
+    if (bulletTimeTimer > 0) speedMul = Math.min(speedMul, 0.30);
     const effSpeed = z.speed * speedMul;
     const nx = z.x + (dx / d) * effSpeed * dt;
     const ny = z.y + (dy / d) * effSpeed * dt;
@@ -3770,6 +3924,11 @@ function hardReset() {
   player.special = {};
   player.specialLevels = {};
   player.exp = 0;
+  player.abilities = {};
+  player.abilityLast = {};
+  player.rageTimer = 0;
+  bulletTimeTimer = 0;
+  homingBulletsTimer = 0;
   treeLevels = { combat: 0, survival: 0, economy: 0 };
   rootOwned = {};
   treeView = 'tomes';
@@ -6012,6 +6171,41 @@ function drawHud() {
       const txt = k === 'shield' ? buffLabels[k] : `${buffLabels[k]} ${v.toFixed(1)}s`;
       ctx.fillText(txt, 14, by);
       by += 14;
+    }
+  }
+  // Active abilities — small pills along the bottom-left showing which keys
+  // are bound, with a cooldown bar that fills when ready.
+  const unlocked = ABILITY_KEYS.filter(k => player.abilities[k]);
+  if (unlocked.length) {
+    const pw = 64, ph = 24, gap = 6;
+    let ax = 14, ay = H - 14 - ph;
+    for (const k of unlocked) {
+      const def = ABILITIES[k];
+      const last = player.abilityLast[k] || -Infinity;
+      const elapsed = gameTime - last;
+      const ratio = Math.max(0, Math.min(1, elapsed / def.cooldown));
+      const ready = ratio >= 1;
+      // body
+      ctx.fillStyle = ready ? '#13261c' : '#13151c';
+      ctx.fillRect(ax, ay, pw, ph);
+      ctx.strokeStyle = ready ? def.color : '#33363f';
+      ctx.lineWidth = ready ? 2 : 1;
+      ctx.strokeRect(ax, ay, pw, ph);
+      // hotkey letter on the left
+      ctx.fillStyle = def.color;
+      ctx.font = 'bold 12px system-ui';
+      ctx.textAlign = 'left';
+      ctx.fillText(def.key.slice(3), ax + 6, ay + 16);
+      // short name
+      ctx.fillStyle = '#fff';
+      fitFont(def.name, pw - 26, 'bold 9px system-ui', 8);
+      ctx.fillText(def.name, ax + 20, ay + 12);
+      // cooldown bar at the bottom
+      ctx.fillStyle = '#1d1f26';
+      ctx.fillRect(ax + 20, ay + 16, pw - 26, 4);
+      ctx.fillStyle = ready ? def.color : '#5a5d66';
+      ctx.fillRect(ax + 20, ay + 16, (pw - 26) * ratio, 4);
+      ax += pw + gap;
     }
   }
   // Picked perks (tomes)
