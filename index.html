@@ -1468,6 +1468,8 @@ const cheatSections = [
         player.hp = player.maxHp;
       } },
     { label: 'God Mode', toggle: () => godMode, run() { godMode = !godMode; } },
+    { label: () => recentErrors.length > 0 ? `Clear Errors (${recentErrors.length})` : 'Clear Errors',
+      run() { recentErrors.length = 0; } },
   ]},
   { id: 'waves', name: 'Waves & Bosses', open: false, items: [
     { label: '+5 Waves', run() {
@@ -11140,24 +11142,30 @@ function drawTraderList(x, y, w, sy, clipY, clipH) {
 
 // ---------- Loop ----------
 let lastT = performance.now();
-// Tracks the last error logged so we don't spam the console with the same
-// throw 60 times a second. Cleared after a few seconds of clean frames.
-let lastErrorMsg = null;
-let lastErrorAt = 0;
+// In-game error log — captured by both the tick try/catch and the
+// window-level 'error' listener, then drawn as a small panel in the top-
+// right of the canvas. Keeps the most recent 5 errors so the user doesn't
+// need DevTools to diagnose blank-screen bugs.
+const recentErrors = []; // newest first
+function logErrorInGame(tag, err) {
+  const msg = (err && (err.stack || err.message)) || String(err);
+  if (recentErrors[0] && recentErrors[0].msg === msg) {
+    recentErrors[0].t = performance.now();
+    recentErrors[0].count = (recentErrors[0].count || 1) + 1;
+    return;
+  }
+  recentErrors.unshift({ tag, msg, t: performance.now(), count: 1 });
+  if (recentErrors.length > 5) recentErrors.length = 5;
+}
 
 function tick() {
   try {
     tickBody();
   } catch (err) {
-    const msg = String(err && err.stack || err);
-    if (msg !== lastErrorMsg || performance.now() - lastErrorAt > 2000) {
-      console.error('[tick error]', err);
-      lastErrorMsg = msg;
-      lastErrorAt = performance.now();
-    }
-    // Surface the error in-game so blank-screen bugs are obvious instead of
-    // silently confusing — and reset the transform so the next frame can
-    // draw cleanly.
+    logErrorInGame('[tick]', err);
+    console.error('[tick error]', err);
+    // Reset transform so the next frame can draw cleanly even if the throw
+    // happened mid-translate.
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.globalAlpha = 1;
     ctx.fillStyle = 'rgba(214, 48, 48, 0.85)';
@@ -11165,10 +11173,55 @@ function tick() {
     ctx.fillStyle = '#fff';
     ctx.font = 'bold 13px system-ui';
     ctx.textAlign = 'center';
-    ctx.fillText('Render error — open DevTools console for details', W/2, H/2);
+    ctx.fillText('Render error — see the panel in the top-right', W/2, H/2);
     ctx.textAlign = 'left';
   }
+  // Always draw the error overlay last so it's visible regardless of
+  // which game state we're in (menu, paused, playing, tutorial).
+  drawErrorOverlay();
   requestAnimationFrame(tick);
+}
+
+// In-canvas error panel — shows the most recent errors with their first
+// few stack frames so the player can read them without DevTools.
+function drawErrorOverlay() {
+  if (recentErrors.length === 0) return;
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalAlpha = 1;
+  const w = 560, lineH = 13;
+  let totalH = 26;
+  // Pre-measure for the panel height
+  for (const e of recentErrors) {
+    const lines = String(e.msg || '').split('\n').slice(0, 4);
+    totalH += lineH * lines.length + 8;
+  }
+  const x = W - w - 8, y = 8;
+  ctx.fillStyle = 'rgba(80, 8, 8, 0.94)';
+  ctx.fillRect(x, y, w, totalH);
+  ctx.strokeStyle = '#ff5050';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(x + 0.5, y + 0.5, w - 1, totalH - 1);
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 11px ui-monospace, monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText('ERRORS · most recent first · click  Clear Errors  in cheats to dismiss', x + 8, y + 16);
+  let ly = y + 30;
+  for (const e of recentErrors) {
+    const lines = String(e.msg || '').split('\n').slice(0, 4);
+    const head = lines[0] || '(no message)';
+    ctx.fillStyle = '#ffd0d0';
+    const headLine = e.tag + ' ' + head + (e.count > 1 ? `  ×${e.count}` : '');
+    ctx.fillText(headLine.slice(0, 84), x + 8, ly);
+    ly += lineH;
+    for (let i = 1; i < lines.length; i++) {
+      ctx.fillStyle = '#dfe2e8';
+      ctx.fillText('  ' + lines[i].trim().slice(0, 82), x + 8, ly);
+      ly += lineH;
+    }
+    ly += 6;
+  }
+  ctx.restore();
 }
 
 function tickBody() {
@@ -11261,6 +11314,11 @@ function tickBody() {
 // outside the tick loop, surface it in the console with a clear tag.
 window.addEventListener('error', (e) => {
   console.error('[window error]', e.error || e.message);
+  logErrorInGame('[window]', e.error || e.message);
+});
+window.addEventListener('unhandledrejection', (e) => {
+  console.error('[promise]', e.reason);
+  logErrorInGame('[promise]', e.reason);
 });
 
 tick();
