@@ -641,6 +641,43 @@ const player = {
   specialLevels: {},
 };
 
+// Local co-op: a second player (P2) that shares P1's gear and perks but
+// has its own position, HP, and movement. Lives outside the `player`
+// object so existing references keep working unchanged.
+const player2 = {
+  isP2: true,
+  x: SPAWN.x + 60, y: SPAWN.y, r: 11,
+  hp: 100, maxHp: 100,
+  invuln: 0,
+  lastShot: 0,
+  lastSecondary: -10,
+  buffs: { triple: 0, rapid: 0, fast: 0, shield: 0 },
+};
+// players[] is the canonical list — single-player has just [player]; enabling
+// co-op pushes player2 onto it. The contact-damage loop and zombie chase
+// targeting walk this array.
+const players = [player];
+let coopEnabled = false;
+
+function enableCoop() {
+  if (coopEnabled) return;
+  player2.x = player.x + 60;
+  player2.y = player.y;
+  player2.hp = player2.maxHp;
+  player2.invuln = 1.5;
+  player2.lastShot = 0;
+  players.push(player2);
+  coopEnabled = true;
+  floaters.push({ x: player2.x, y: player2.y - 26, text: 'P2 JOINED', life: 2.4, color: '#9bf07a' });
+}
+
+function disableCoop() {
+  if (!coopEnabled) return;
+  const idx = players.indexOf(player2);
+  if (idx >= 0) players.splice(idx, 1);
+  coopEnabled = false;
+}
+
 // Weapon definitions. Multipliers stack on top of player base stats.
 // shots/spread/damage/fireRate/bulletSpeed are multipliers (or extras for shots).
 const WEAPONS = {
@@ -1463,6 +1500,14 @@ const cheatSections = [
     { label: '+Spawner',  run() { spawnSpecific('spawner'); } },
     { label: '+MiniBoss', run() { spawnMiniBoss(); } },
     { label: '+Dummy',    run() { spawnTrainerDummy(); } },
+  ]},
+  // ---- Local co-op (P2 sidekick) ----
+  { id: 'coop', name: 'Co-op', open: false, items: [
+    { label: () => coopEnabled ? 'P2 Joined ★' : 'Join P2',
+      toggle: () => coopEnabled,
+      run() { coopEnabled ? disableCoop() : enableCoop(); } },
+    { label: 'Heal P2', run() { player2.hp = player2.maxHp; player2.invuln = 1.0; } },
+    { label: 'Teleport P2 → P1', run() { player2.x = player.x + 30; player2.y = player.y + 30; } },
   ]},
   { id: 'loadout', name: 'Loadout', open: false, items: [
     { label: '+Pickup', run() {
@@ -3937,15 +3982,21 @@ function updateWave(dt) {
 }
 
 function tryShoot(nowSec) {
+  // P1's shot — aim direction comes from the mouse.
+  const baseAng = Math.atan2(mouse.y - player.y, mouse.x - player.x);
+  tryShootFor(player, baseAng, nowSec);
+}
+
+// Shared shoot path — used by P1 (mouse aim) and P2 (auto-aim). Reads stats
+// and perks from P1 (shared) but spawns bullets from `p`'s position and uses
+// `p.lastShot` for the per-shooter cadence.
+function tryShootFor(p, baseAng, nowSec) {
   const w = WEAPONS[player.weapon] || WEAPONS.pistol;
   const fr = player.fireRate * w.fireRate * (player.buffs.rapid > 0 ? 2 : 1);
   const interval = 1 / fr;
-  if (nowSec - player.lastShot < interval) return;
-  player.lastShot = nowSec;
+  if (nowSec - p.lastShot < interval) return;
+  p.lastShot = nowSec;
   SFX.shoot(player.weapon);
-
-  const dx = mouse.x - player.x, dy = mouse.y - player.y;
-  const baseAng = Math.atan2(dy, dx);
   const extra = player.buffs.triple > 0 ? 2 : 0;          // triple buff = +2 spread shots
   // Multishot perk: rolls once per trigger pull to add a bonus shot.
   let shots = w.shots + extra;
@@ -3963,8 +4014,8 @@ function tryShoot(nowSec) {
   const bSpeed = player.bulletSpeed * w.bulletSpeed * (1 + (player.special.eagleEye || 0));
   const pierce = w.pierce + player.pierce;
 
-  const muzzleX = player.x + Math.cos(baseAng) * (player.r + 8);
-  const muzzleY = player.y + Math.sin(baseAng) * (player.r + 8);
+  const muzzleX = p.x + Math.cos(baseAng) * (p.r + 8);
+  const muzzleY = p.y + Math.sin(baseAng) * (p.r + 8);
   muzzleFlash(muzzleX, muzzleY, baseAng);
 
   // Pattern dispatch: each special weapon picks its own set of fire angles.
@@ -4007,11 +4058,11 @@ function tryShoot(nowSec) {
     const twinOff = (w.pattern === 'twin') ? ((twinIdx++ === 0) ? -6 : 6) : 0;
     const perpX = -Math.sin(a) * twinOff, perpY = Math.cos(a) * twinOff;
     const sx = isOrbit
-      ? player.x + Math.cos(a) * w.orbitRadius
-      : player.x + Math.cos(a) * (player.r + 4) + perpX;
+      ? p.x + Math.cos(a) * w.orbitRadius
+      : p.x + Math.cos(a) * (p.r + 4) + perpX;
     const sy = isOrbit
-      ? player.y + Math.sin(a) * w.orbitRadius
-      : player.y + Math.sin(a) * (player.r + 4) + perpY;
+      ? p.y + Math.sin(a) * w.orbitRadius
+      : p.y + Math.sin(a) * (p.r + 4) + perpY;
     bullets.push({
       x: sx, y: sy,
       vx: isOrbit ? 0 : Math.cos(a) * bSpeed,
@@ -5458,10 +5509,13 @@ function tryDropGun(z) {
 
 function updatePlayer(dt) {
   let dx = 0, dy = 0;
-  if (keys['KeyW'] || keys['ArrowUp'])    dy -= 1;
-  if (keys['KeyS'] || keys['ArrowDown'])  dy += 1;
-  if (keys['KeyA'] || keys['ArrowLeft'])  dx -= 1;
-  if (keys['KeyD'] || keys['ArrowRight']) dx += 1;
+  // When co-op is on, arrow keys belong to P2. Single-player keeps arrow
+  // support so anyone who used arrows before still has them.
+  const allowArrows = !coopEnabled;
+  if (keys['KeyW'] || (allowArrows && keys['ArrowUp']))    dy -= 1;
+  if (keys['KeyS'] || (allowArrows && keys['ArrowDown']))  dy += 1;
+  if (keys['KeyA'] || (allowArrows && keys['ArrowLeft']))  dx -= 1;
+  if (keys['KeyD'] || (allowArrows && keys['ArrowRight'])) dx += 1;
   const len = Math.hypot(dx, dy);
   if (len > 0) { dx /= len; dy /= len; }
   const sp = player.speed * (player.buffs.fast > 0 ? 1.5 : 1);
@@ -5499,6 +5553,47 @@ function updatePlayer(dt) {
   if (homingBulletsTimer > 0) homingBulletsTimer = Math.max(0, homingBulletsTimer - dt);
 }
 
+// Local co-op companion. Movement on arrow keys, primary fire is auto-aim
+// at the nearest non-dummy zombie within 380px. Shares P1's weapon and all
+// the stat/perk math through tryShootFor — only the spawn position and
+// per-shot cooldown are per-P2.
+function updateP2(dt) {
+  let dx = 0, dy = 0;
+  if (keys['ArrowUp'])    dy -= 1;
+  if (keys['ArrowDown'])  dy += 1;
+  if (keys['ArrowLeft'])  dx -= 1;
+  if (keys['ArrowRight']) dx += 1;
+  const len = Math.hypot(dx, dy);
+  if (len > 0) { dx /= len; dy /= len; }
+  const sp = player.speed * (player.buffs.fast > 0 ? 1.5 : 1);
+  player2.x = Math.max(player2.r, Math.min(W - player2.r, player2.x + dx * sp * dt));
+  player2.y = Math.max(player2.r, Math.min(H - player2.r, player2.y + dy * sp * dt));
+  if (player2.invuln > 0) player2.invuln -= dt;
+  // Decay P2's local buffs (own shield etc.)
+  for (const k in player2.buffs) {
+    if (k === 'shield') continue;
+    if (player2.buffs[k] > 0) {
+      player2.buffs[k] -= dt;
+      if (player2.buffs[k] < 0) player2.buffs[k] = 0;
+    }
+  }
+  // Auto-fire: find nearest non-dummy zombie within range
+  let near = null, bd2 = 380 * 380;
+  for (const z of zombies) {
+    if (z.isDummy || z.isBoss) {
+      // bosses are huge and far — still target them but with lower priority
+      if (!z.isBoss) continue;
+    }
+    const zdx = z.x - player2.x, zdy = z.y - player2.y;
+    const d2 = zdx*zdx + zdy*zdy;
+    if (d2 < bd2) { bd2 = d2; near = z; }
+  }
+  if (near) {
+    const ang = Math.atan2(near.y - player2.y, near.x - player2.x);
+    tryShootFor(player2, ang, gameTime);
+  }
+}
+
 function zombieCanEnter(x, y, r) {
   // shop area is impassable
   if (x + r > shop.x && x - r < shop.x + shop.w
@@ -5531,10 +5626,20 @@ function updateZombies(dt) {
       tx = z.x + Math.cos(z.confuseAng) * 200;
       ty = z.y + Math.sin(z.confuseAng) * 200;
     } else {
-      // Aggro toward the nearest decoy if there is one, else the player.
+      // Aggro toward the nearest decoy if there is one, else the nearest
+      // living player (covers co-op P2 as well as P1).
       const lure = nearestDecoy(z);
-      tx = lure ? lure.x : player.x;
-      ty = lure ? lure.y : player.y;
+      if (lure) { tx = lure.x; ty = lure.y; }
+      else {
+        let nearestP = player, bd2 = Infinity;
+        for (const p of players) {
+          if (p.hp <= 0) continue;
+          const pdx = p.x - z.x, pdy = p.y - z.y;
+          const d2 = pdx*pdx + pdy*pdy;
+          if (d2 < bd2) { bd2 = d2; nearestP = p; }
+        }
+        tx = nearestP.x; ty = nearestP.y;
+      }
     }
     const dx = tx - z.x, dy = ty - z.y;
     const d = Math.hypot(dx, dy) || 1;
@@ -5741,43 +5846,46 @@ function updateZombies(dt) {
       }
     }
 
-    // contact damage to player + thorns retaliation
-    // dx/dy/d above point toward whatever the zombie is chasing (player or
-    // decoy). Recompute against the player specifically for damage.
-    const pdx = player.x - z.x, pdy = player.y - z.y;
-    const pd = Math.hypot(pdx, pdy) || 1;
-    const rr = z.r + player.r;
-    const inContact = pdx*pdx + pdy*pdy < rr*rr;
-    if (inContact && player.invuln <= 0 && !godMode) {
-      if (player.buffs.shield > 0) {
-        player.buffs.shield = 0;
-        const knock = 12 / pd;
-        player.x -= pdx * knock;
-        player.y -= pdy * knock;
-        player.invuln = 0.6;
-        shake(8);
-      } else {
-        // Iron Skin = always-on damage reduction.
-        // Last Stand = extra reduction when below 20% HP.
-        let dmgMul = 1 - (player.special.ironSkin || 0);
-        if (player.special.lastStand && player.hp / player.maxHp < 0.2) {
-          dmgMul -= player.special.lastStand;
+    // Contact damage + thorns — iterate every living player so P2 (when in
+    // co-op) takes hits too. Perks like Iron Skin / Last Stand / Thorns read
+    // from P1 (perks are a shared team-wide effect).
+    let zombieDiedToThorns = false;
+    for (const p of players) {
+      if (p.hp <= 0) continue;
+      const pdx = p.x - z.x, pdy = p.y - z.y;
+      const pd = Math.hypot(pdx, pdy) || 1;
+      const rr = z.r + p.r;
+      const inContact = pdx*pdx + pdy*pdy < rr*rr;
+      if (inContact && p.invuln <= 0 && !godMode) {
+        if (p.buffs.shield > 0) {
+          p.buffs.shield = 0;
+          const knock = 12 / pd;
+          p.x -= pdx * knock;
+          p.y -= pdy * knock;
+          p.invuln = 0.6;
+          shake(8);
+        } else {
+          let dmgMul = 1 - (player.special.ironSkin || 0);
+          if (player.special.lastStand && p.hp / p.maxHp < 0.2) {
+            dmgMul -= player.special.lastStand;
+          }
+          const dmgTaken = z.damage * dt * Math.max(0, dmgMul);
+          p.hp -= dmgTaken;
+          flashRed = Math.max(flashRed, Math.min(0.35, dmgTaken * 0.03));
+          SFX.playerHurt();
         }
-        const dmgTaken = z.damage * dt * Math.max(0, dmgMul);
-        player.hp -= dmgTaken;
-        flashRed = Math.max(flashRed, Math.min(0.35, dmgTaken * 0.03));
-        SFX.playerHurt();
+      }
+      if (inContact && player.special.thorns) {
+        z.hp -= player.special.thorns * dt;
+        if (z.hp <= 0) {
+          killZombie(z);
+          zombies.splice(i, 1);
+          zombieDiedToThorns = true;
+          break;
+        }
       }
     }
-    // Thorns hits any zombie touching the player, even through invuln/shield.
-    if (inContact && player.special.thorns) {
-      z.hp -= player.special.thorns * dt;
-      if (z.hp <= 0) {
-        killZombie(z);
-        zombies.splice(i, 1);
-        continue;
-      }
-    }
+    if (zombieDiedToThorns) continue;
     // Decoy contact damage — zombies tear into the decoy when in range.
     for (const dc of decoys) {
       const ddx = dc.x - z.x, ddy = dc.y - z.y;
@@ -7623,6 +7731,56 @@ function render() {
 
   }
 
+  // ---- P2 (local co-op) ----
+  if (coopEnabled && !(player2.invuln > 0 && Math.floor(player2.invuln * 12) % 2 === 0)) {
+    // Aim toward nearest zombie for facing direction (matches its auto-fire)
+    let nx = player2.x + 1, ny = player2.y;
+    let bd2 = Infinity;
+    for (const z of zombies) {
+      if (z.isDummy) continue;
+      const zdx = z.x - player2.x, zdy = z.y - player2.y;
+      const d2 = zdx*zdx + zdy*zdy;
+      if (d2 < bd2) { bd2 = d2; nx = z.x; ny = z.y; }
+    }
+    const facing2 = Math.atan2(ny - player2.y, nx - player2.x);
+    // shadow
+    ctx.fillStyle = 'rgba(0,0,0,0.32)';
+    ctx.beginPath();
+    ctx.ellipse(player2.x, player2.y + player2.r * 0.55, player2.r * 0.78, player2.r * 0.28, 0, 0, Math.PI*2);
+    ctx.fill();
+    if (player2.buffs.shield > 0) {
+      ctx.strokeStyle = '#9bf07a';
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(player2.x, player2.y, player2.r + 6, 0, Math.PI*2); ctx.stroke();
+    }
+    // body — green tint to differentiate from P1
+    ctx.fillStyle = '#bff0bf';
+    ctx.beginPath(); ctx.arc(player2.x, player2.y, player2.r, 0, Math.PI*2); ctx.fill();
+    ctx.strokeStyle = '#2c5a2c';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    // little "2" marker
+    ctx.fillStyle = '#1a3a1a';
+    ctx.font = 'bold 9px system-ui';
+    ctx.textAlign = 'center';
+    ctx.fillText('2', player2.x, player2.y + 3);
+    ctx.textAlign = 'left';
+    // gun facing nearest zombie
+    ctx.save();
+    ctx.translate(player2.x, player2.y);
+    ctx.rotate(facing2);
+    drawGun(player.weapon, player2.r);
+    ctx.restore();
+    // HP bar above P2
+    if (player2.hp < player2.maxHp) {
+      const bw = player2.r * 2.4;
+      ctx.fillStyle = '#222';
+      ctx.fillRect(player2.x - bw/2, player2.y - player2.r - 9, bw, 3);
+      ctx.fillStyle = '#9bf07a';
+      ctx.fillRect(player2.x - bw/2, player2.y - player2.r - 9, bw * (player2.hp / player2.maxHp), 3);
+    }
+  }
+
   // build-mode ghost preview at the cursor (in world coords)
   drawBuildMode();
 
@@ -9111,6 +9269,7 @@ function cheatSectionColor(id) {
     case 'spawn':             return '#ff8060';
     case 'loadout':           return '#5a87c4';
     case 'audio':             return '#9aa0ab';
+    case 'coop':              return '#9bf07a';
     case 'abilities':         return '#5cffec';
     case 'pets':              return '#80ffe0';
     case 'events':            return '#ffd166';
@@ -10946,6 +11105,17 @@ function tick() {
       pendingBossDeath = null;
     }
     updatePlayer(dt);
+    if (coopEnabled) {
+      updateP2(dt);
+      // P2 down → respawn next to P1 with brief invuln. Only P1's death
+      // triggers the run-end checkDeath flow.
+      if (player2.hp <= 0) {
+        player2.x = player.x + 30; player2.y = player.y + 30;
+        player2.hp = player2.maxHp;
+        player2.invuln = 2.5;
+        floaters.push({ x: player2.x, y: player2.y - 24, text: 'P2 RESPAWN', life: 1.6, color: '#9bf07a' });
+      }
+    }
     if (mouse.down && !inShop() && !pendingCards) tryShoot(gameTime);
     updateBullets(dt);
     updateZombies(dt);
