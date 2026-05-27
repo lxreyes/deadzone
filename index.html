@@ -4110,17 +4110,21 @@ function drawMenuButton(rect, label, hint, accent) {
     ctx.fillStyle = 'rgba(255, 255, 255, 0.06)';
     ctx.fillRect(rect.x + 6, rect.y + 1, rect.w - 8, 3);
   }
-  // padding budget inside the button: 5px stripe + 8px left margin + 10px right margin
-  const inner = rect.w - 24;
+  // Center the text inside the area AFTER the accent stripe so it visually
+  // balances. inner is the writable width with a small right margin too.
+  const stripe = 5;
+  const padL = stripe + 8, padR = 10;
+  const inner = rect.w - padL - padR;
+  const centerX = rect.x + padL + inner / 2;
   // label — shrinks if too long for the button
   ctx.fillStyle = '#fff';
   fitFont(label, inner, 'bold 22px system-ui', 14);
   ctx.textAlign = 'center';
-  ctx.fillText(label, rect.x + rect.w / 2 + 2, rect.y + (hint ? 34 : rect.h / 2 + 8));
+  ctx.fillText(label, centerX, rect.y + (hint ? 34 : rect.h / 2 + 8));
   if (hint) {
     ctx.fillStyle = hover ? '#bcd6ff' : '#9aa0ab';
     fitFont(hint, inner, '12px system-ui', 9);
-    ctx.fillText(hint, rect.x + rect.w / 2 + 2, rect.y + 54);
+    ctx.fillText(hint, centerX, rect.y + 54);
   }
   ctx.textAlign = 'left';
 }
@@ -4324,18 +4328,18 @@ function drawSpriteEditor() {
   ctx.fillRect(0, 0, W, H);
 
   ctx.fillStyle = '#fff';
-  ctx.font = 'bold 32px system-ui';
+  fitFont('Sprite Editor', W - 40, 'bold 32px system-ui', 18);
   ctx.textAlign = 'center';
   ctx.fillText('Sprite Editor', W / 2, 50);
   ctx.fillStyle = '#9aa0ab';
-  ctx.font = '12px system-ui';
+  fitFont('pick a target, pick a color, drag to paint', W - 80, '12px system-ui', 10);
   ctx.fillText('pick a target, pick a color, drag to paint', W / 2, 70);
 
   menuButtons = [];
   spriteEditorRects = { tabs: [], palette: [], grid: null, clear: null, back: null };
 
-  // Target tabs across the top
-  const tabW = 120, tabH = 30, tabGap = 8;
+  // Target tabs across the top — slightly narrower now that we have 6
+  const tabW = 108, tabH = 30, tabGap = 6;
   const tabsTotalW = SPRITE_TARGETS.length * tabW + (SPRITE_TARGETS.length - 1) * tabGap;
   let tx = (W - tabsTotalW) / 2;
   for (const t of SPRITE_TARGETS) {
@@ -4348,7 +4352,7 @@ function drawSpriteEditor() {
     ctx.lineWidth = active ? 2 : 1;
     ctx.strokeRect(rect.x, rect.y, rect.w, rect.h);
     ctx.fillStyle = '#fff';
-    ctx.font = 'bold 12px system-ui';
+    fitFont(t.label, rect.w - 12, 'bold 12px system-ui', 9);
     ctx.textAlign = 'center';
     ctx.fillText(t.label, rect.x + rect.w / 2, rect.y + 19);
     spriteEditorRects.tabs.push(rect);
@@ -4427,7 +4431,7 @@ function drawSpriteEditor() {
     ctx.strokeRect(sx, sy, swatch, swatch);
     if (isErase) {
       ctx.fillStyle = '#dfe2e8';
-      ctx.font = 'bold 10px system-ui';
+      fitFont('erase', swatch - 6, 'bold 10px system-ui', 8);
       ctx.textAlign = 'center';
       ctx.fillText('erase', sx + swatch / 2, sy + swatch / 2 + 3);
     }
@@ -4442,7 +4446,7 @@ function drawSpriteEditor() {
   ctx.strokeStyle = '#d36'; ctx.lineWidth = 2;
   ctx.strokeRect(clearRect.x, clearRect.y, clearRect.w, clearRect.h);
   ctx.fillStyle = '#fff';
-  ctx.font = 'bold 13px system-ui';
+  fitFont('Clear', clearRect.w - 16, 'bold 13px system-ui', 10);
   ctx.textAlign = 'center';
   ctx.fillText('Clear', clearRect.x + clearRect.w / 2, clearRect.y + 23);
   menuButtons.push(clearRect);
@@ -5456,10 +5460,13 @@ function tick() {
   if (trainingMode && gameState === 'playing') drawTrainingBanner();
 
   // Custom-drawn cursor — last to draw, sits on top of every UI layer.
-  // System cursor is hidden when a custom one exists.
-  const wantCursor = hasCustomSprite('cursor') ? 'none' : 'crosshair';
+  // Suppressed in the sprite editor (any tab) so the player can see exactly
+  // where they're painting using the system crosshair.
+  const inSpriteEditor = gameState === 'settings' && settingsView === 'sprites';
+  const useCustomCursor = hasCustomSprite('cursor') && !inSpriteEditor;
+  const wantCursor = useCustomCursor ? 'none' : 'crosshair';
   if (c.style.cursor !== wantCursor) c.style.cursor = wantCursor;
-  if (hasCustomSprite('cursor')) drawCustomSprite('cursor', mouse.x, mouse.y, 28);
+  if (useCustomCursor) drawCustomSprite('cursor', mouse.x, mouse.y, 28);
 
   requestAnimationFrame(tick);
 }
