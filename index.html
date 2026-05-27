@@ -1240,16 +1240,58 @@ const SPRITE_PALETTE = [
   '#c47eff',
   '#9aa0ab',
 ];
-const SPRITE_TARGETS = [
-  { id: 'player',       label: 'Player' },
-  { id: 'zombieNormal', label: 'Normal' },
-  { id: 'zombieFast',   label: 'Fast' },
-  { id: 'zombieTank',   label: 'Tank' },
-  { id: 'zombieBoss',   label: 'Boss' },
-  { id: 'cursor',       label: 'Cursor' },
+// Sprite editor catalog — grouped into subsections (categories). Each
+// category appears as a top tab; the slots inside become a row of sub-tabs.
+const SPRITE_CATEGORIES = [
+  { id: 'general', label: 'General', targets: [
+    { id: 'player',  label: 'Player' },
+    { id: 'cursor',  label: 'Cursor' },
+  ]},
+  { id: 'zombies', label: 'Zombies', targets: [
+    { id: 'zombieNormal',   label: 'Normal' },
+    { id: 'zombieFast',     label: 'Fast' },
+    { id: 'zombieTank',     label: 'Tank' },
+    { id: 'zombieExploder', label: 'Exploder' },
+    { id: 'zombieSpitter',  label: 'Spitter' },
+    { id: 'zombieHealer',   label: 'Healer' },
+    { id: 'zombieShielded', label: 'Shielded' },
+    { id: 'zombieSpawner',  label: 'Spawner' },
+    { id: 'zombieMiniBoss', label: 'Mini-Boss' },
+    { id: 'zombieBoss',     label: 'Boss' },
+  ]},
+  { id: 'guns', label: 'Guns', targets: [
+    { id: 'gunPistol',   label: 'Pistol' },
+    { id: 'gunShotgun',  label: 'Shotgun' },
+    { id: 'gunSmg',      label: 'SMG' },
+    { id: 'gunRifle',    label: 'Rifle' },
+    { id: 'gunRocket',   label: 'Rocket' },
+    { id: 'gunFlame',    label: 'Flamethrower' },
+  ]},
+  { id: 'bullets', label: 'Bullets', targets: [
+    { id: 'bulletDefault', label: 'Default' },
+    { id: 'bulletRocket',  label: 'Rocket' },
+    { id: 'bulletKunai',   label: 'Kunai' },
+    { id: 'bulletChakram', label: 'Chakram' },
+    { id: 'bulletLaser',   label: 'Laser' },
+    { id: 'bulletPizza',   label: 'Pizza' },
+  ]},
 ];
+// Flat list of all targets (used by sprite-load paths that just iterate slots).
+const SPRITE_TARGETS = SPRITE_CATEGORIES.flatMap(c => c.targets);
+// Map zombie type → sprite slot id, used by the render hook below.
+const ZOMBIE_SPRITE_BY_TYPE = {
+  normal: 'zombieNormal',
+  fast: 'zombieFast',
+  tank: 'zombieTank',
+  exploder: 'zombieExploder',
+  spitter: 'zombieSpitter',
+  healer: 'zombieHealer',
+  shielded: 'zombieShielded',
+  spawner: 'zombieSpawner',
+};
 let customSprites = {}; // id → Uint8Array(256), one palette index per pixel
 let spriteEditorTarget = 'player';
+let spriteEditorCategory = 'general';
 let spriteEditorColor = 1; // index into SPRITE_PALETTE
 let spriteEditorPaint = null; // truthy while click-painting; carries the color
 let spriteEditorRects = null; // populated each draw frame
@@ -1515,6 +1557,14 @@ function pointInRect(p, r) { return p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y
 // Draw a weapon at the local origin, pointing along +x. Caller handles transform.
 function drawGun(weapon, r) {
   const w = WEAPONS[weapon] || WEAPONS.pistol;
+  // Custom-sprite override — if the user painted a gun in the sprite editor,
+  // use that instead of the procedural silhouette. Slot id is `gun<Weapon>`
+  // with the first letter uppercase.
+  const gunSpriteId = 'gun' + weapon.charAt(0).toUpperCase() + weapon.slice(1);
+  if (hasCustomSprite(gunSpriteId)) {
+    drawCustomSprite(gunSpriteId, r * 0.7, 0, r * 2.0);
+    return;
+  }
   const x0 = r * 0.55;
   ctx.strokeStyle = '#15151a';
   ctx.lineWidth = 1;
@@ -1834,6 +1884,30 @@ function drawGun(weapon, r) {
 
 // Dispatch bullet drawing to a gag-specific shape, falling back to a plain disc.
 function drawBullet(b) {
+  // Custom-sprite override — per-bulletKind slot first, then a generic
+  // "bulletDefault" fallback. The painted sprite rotates with the bullet's
+  // velocity so the silhouette stays oriented correctly.
+  const kindSlot = b.bulletKind
+    ? 'bullet' + b.bulletKind.charAt(0).toUpperCase() + b.bulletKind.slice(1)
+    : null;
+  if (kindSlot && hasCustomSprite(kindSlot)) {
+    const ang = Math.atan2(b.vy, b.vx);
+    ctx.save();
+    ctx.translate(b.x, b.y);
+    ctx.rotate(ang);
+    drawCustomSprite(kindSlot, 0, 0, 18);
+    ctx.restore();
+    return;
+  }
+  if (hasCustomSprite('bulletDefault')) {
+    const ang = Math.atan2(b.vy, b.vx);
+    ctx.save();
+    ctx.translate(b.x, b.y);
+    ctx.rotate(ang);
+    drawCustomSprite('bulletDefault', 0, 0, 14);
+    ctx.restore();
+    return;
+  }
   if (b.bulletKind === 'chicken') {
     const ang = Math.atan2(b.vy, b.vx);
     ctx.save();
@@ -6057,11 +6131,11 @@ function render() {
       ctx.fillRect(z.x - 8, z.y + z.r + 10, 16, 3);
       continue;
     }
-    // Map zombie type → sprite slot for the custom sprite system
-    const spriteId = z.isBoss ? 'zombieBoss'
-      : z.type === 'fast' ? 'zombieFast'
-      : z.type === 'tank' ? 'zombieTank'
-      : 'zombieNormal';
+    // Map zombie type → sprite slot for the custom sprite system. Mini-boss
+    // and boss get their own slots; the per-type table covers the rest.
+    const spriteId = z.isMiniBoss ? 'zombieMiniBoss'
+      : z.isBoss ? 'zombieBoss'
+      : (ZOMBIE_SPRITE_BY_TYPE[z.type] || 'zombieNormal');
     if (z.isMiniBoss) {
       // Smaller version of the boss aura
       const pulse = 1 + Math.sin(gameTime * 5) * 0.06;
@@ -6070,18 +6144,22 @@ function render() {
       grad.addColorStop(1, 'rgba(255, 160, 64, 0)');
       ctx.fillStyle = grad;
       ctx.beginPath(); ctx.arc(z.x, z.y, z.r * 1.7 * pulse, 0, Math.PI*2); ctx.fill();
-      // Body
-      ctx.fillStyle = z.color;
-      ctx.beginPath(); ctx.arc(z.x, z.y, z.r, 0, Math.PI*2); ctx.fill();
-      // Plated armor stripes
-      ctx.strokeStyle = '#6a7a8a';
-      ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.arc(z.x, z.y, z.r - 4, 0, Math.PI * 2); ctx.stroke();
-      // Glowing orange eyes
-      ctx.fillStyle = '#ffa040';
-      const meo = z.r * 0.32;
-      ctx.beginPath(); ctx.arc(z.x - meo, z.y - meo * 0.3, 3, 0, Math.PI*2); ctx.fill();
-      ctx.beginPath(); ctx.arc(z.x + meo, z.y - meo * 0.3, 3, 0, Math.PI*2); ctx.fill();
+      if (hasCustomSprite('zombieMiniBoss')) {
+        drawCustomSprite('zombieMiniBoss', z.x, z.y, z.r * 2.2);
+      } else {
+        // Body
+        ctx.fillStyle = z.color;
+        ctx.beginPath(); ctx.arc(z.x, z.y, z.r, 0, Math.PI*2); ctx.fill();
+        // Plated armor stripes
+        ctx.strokeStyle = '#6a7a8a';
+        ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(z.x, z.y, z.r - 4, 0, Math.PI * 2); ctx.stroke();
+        // Glowing orange eyes
+        ctx.fillStyle = '#ffa040';
+        const meo = z.r * 0.32;
+        ctx.beginPath(); ctx.arc(z.x - meo, z.y - meo * 0.3, 3, 0, Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.arc(z.x + meo, z.y - meo * 0.3, 3, 0, Math.PI*2); ctx.fill();
+      }
       // HP bar — always shown
       const mbw = z.r * 2.4;
       ctx.fillStyle = '#222';
@@ -7592,19 +7670,19 @@ function drawSpriteEditor() {
   ctx.textAlign = 'center';
   ctx.fillText('Sprite Editor', W / 2, 50);
   ctx.fillStyle = '#9aa0ab';
-  fitFont('pick a target, pick a color, drag to paint', W - 80, '12px system-ui', 10);
-  ctx.fillText('pick a target, pick a color, drag to paint', W / 2, 70);
+  fitFont('pick a category, pick a target, pick a color, drag to paint', W - 80, '12px system-ui', 10);
+  ctx.fillText('pick a category, pick a target, pick a color, drag to paint', W / 2, 70);
 
   menuButtons = [];
-  spriteEditorRects = { tabs: [], palette: [], grid: null, clear: null, back: null };
+  spriteEditorRects = { tabs: [], categoryTabs: [], palette: [], grid: null, clear: null, back: null };
 
-  // Target tabs across the top — slightly narrower now that we have 6
-  const tabW = 108, tabH = 30, tabGap = 6;
-  const tabsTotalW = SPRITE_TARGETS.length * tabW + (SPRITE_TARGETS.length - 1) * tabGap;
-  let tx = (W - tabsTotalW) / 2;
-  for (const t of SPRITE_TARGETS) {
-    const rect = { x: tx, y: 88, w: tabW, h: tabH, id: t.id };
-    const active = spriteEditorTarget === t.id;
+  // Top row: CATEGORY tabs (General / Zombies / Guns / Bullets)
+  const catW = 140, catH = 30, catGap = 8;
+  const catsTotalW = SPRITE_CATEGORIES.length * catW + (SPRITE_CATEGORIES.length - 1) * catGap;
+  let cx = (W - catsTotalW) / 2;
+  for (const c2 of SPRITE_CATEGORIES) {
+    const rect = { x: cx, y: 88, w: catW, h: catH, id: c2.id };
+    const active = spriteEditorCategory === c2.id;
     const hover = pointInRect(mouse, rect);
     ctx.fillStyle = active ? '#1a3a5a' : (hover ? '#1c2030' : '#13151c');
     ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
@@ -7612,18 +7690,45 @@ function drawSpriteEditor() {
     ctx.lineWidth = active ? 2 : 1;
     ctx.strokeRect(rect.x, rect.y, rect.w, rect.h);
     ctx.fillStyle = '#fff';
-    fitFont(t.label, rect.w - 12, 'bold 12px system-ui', 9);
+    fitFont(c2.label, rect.w - 12, 'bold 13px system-ui', 10);
     ctx.textAlign = 'center';
-    ctx.fillText(t.label, rect.x + rect.w / 2, rect.y + 19);
+    ctx.fillText(c2.label, rect.x + rect.w / 2, rect.y + 20);
+    spriteEditorRects.categoryTabs.push(rect);
+    cx += catW + catGap;
+  }
+
+  // Second row: TARGET sub-tabs for the chosen category
+  const activeCategory = SPRITE_CATEGORIES.find(c2 => c2.id === spriteEditorCategory) || SPRITE_CATEGORIES[0];
+  // Ensure the active target belongs to the current category; if not, reset
+  // to the first target in that category.
+  if (!activeCategory.targets.some(t => t.id === spriteEditorTarget)) {
+    spriteEditorTarget = activeCategory.targets[0].id;
+  }
+  const tabW = 96, tabH = 26, tabGap = 5;
+  const tabsTotalW = activeCategory.targets.length * tabW + (activeCategory.targets.length - 1) * tabGap;
+  let tx = (W - tabsTotalW) / 2;
+  for (const t of activeCategory.targets) {
+    const rect = { x: tx, y: 124, w: tabW, h: tabH, id: t.id };
+    const active = spriteEditorTarget === t.id;
+    const hover = pointInRect(mouse, rect);
+    ctx.fillStyle = active ? '#1a3a5a' : (hover ? '#1c2030' : '#13151c');
+    ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+    ctx.strokeStyle = active ? '#7ec8ff' : '#33363f';
+    ctx.lineWidth = active ? 2 : 1;
+    ctx.strokeRect(rect.x, rect.y, rect.w, rect.h);
+    ctx.fillStyle = hasCustomSprite(t.id) ? '#8be08b' : '#fff';
+    fitFont(t.label, rect.w - 10, 'bold 11px system-ui', 8);
+    ctx.textAlign = 'center';
+    ctx.fillText(t.label, rect.x + rect.w / 2, rect.y + 17);
     spriteEditorRects.tabs.push(rect);
     tx += tabW + tabGap;
   }
 
-  // Grid — centered horizontally, 480x480
+  // Grid — centered horizontally, 480x480, shifted down to accommodate two-row tabs
   const gridSize = 480;
   const cell = gridSize / SPRITE_SIZE; // 30px per cell
   const gx = (W - gridSize) / 2 - 60; // shift left to make room for palette
-  const gy = 136;
+  const gy = 168;
   spriteEditorRects.grid = { x: gx, y: gy, w: gridSize, h: gridSize, cell };
 
   // checkerboard background to show transparency
@@ -7967,7 +8072,17 @@ function drawTrainingBanner() {
 function handleMenuClick() {
   // Sprite editor — check tabs, palette, grid before regular buttons
   if (gameState === 'settings' && settingsView === 'sprites' && spriteEditorRects) {
-    // tabs
+    // category tabs (top row) — switching category resets target to first slot
+    for (const r of (spriteEditorRects.categoryTabs || [])) {
+      if (pointInRect(mouse, r)) {
+        spriteEditorCategory = r.id;
+        const cat = SPRITE_CATEGORIES.find(c2 => c2.id === r.id);
+        if (cat) spriteEditorTarget = cat.targets[0].id;
+        SFX.uiClick();
+        return true;
+      }
+    }
+    // sub-tabs (second row) — pick a slot inside the current category
     for (const r of spriteEditorRects.tabs) {
       if (pointInRect(mouse, r)) { spriteEditorTarget = r.id; SFX.uiClick(); return true; }
     }
