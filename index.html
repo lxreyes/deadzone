@@ -29,6 +29,88 @@ const c = document.getElementById('c');
 const ctx = c.getContext('2d');
 const W = c.width, H = c.height;
 
+// Offscreen-cached arena floor (riveted metal sheet panels). Drawn once at
+// startup so the per-frame cost is a single drawImage blit. See
+// buildMetalFloor() below.
+const floorCache = document.createElement('canvas');
+floorCache.width = W; floorCache.height = H;
+function buildMetalFloor() {
+  const fc = floorCache.getContext('2d');
+  // Base fill: dark gunmetal everywhere
+  fc.fillStyle = '#161922';
+  fc.fillRect(0, 0, W, H);
+  // Lay out sheets in a grid
+  const sheetW = 240, sheetH = 180;
+  const cols = Math.ceil(W / sheetW);
+  const rows = Math.ceil(H / sheetH);
+  for (let r = 0; r < rows; r++) {
+    for (let c2 = 0; c2 < cols; c2++) {
+      const sx = c2 * sheetW;
+      const sy = r * sheetH;
+      const sw = Math.min(sheetW, W - sx);
+      const sh = Math.min(sheetH, H - sy);
+      // Per-sheet tint — derived from grid position so every sheet looks
+      // slightly different but stays stable.
+      const tint = ((c2 * 31 + r * 17) % 12) - 6;
+      const base = Math.max(22, Math.min(42, 32 + tint));
+      fc.fillStyle = `rgb(${base - 3}, ${base}, ${base + 6})`;
+      fc.fillRect(sx, sy, sw, sh);
+      // Top/bottom shading gradient for depth
+      const grad = fc.createLinearGradient(sx, sy, sx, sy + sh);
+      grad.addColorStop(0, 'rgba(255, 255, 255, 0.045)');
+      grad.addColorStop(0.5, 'rgba(0, 0, 0, 0)');
+      grad.addColorStop(1, 'rgba(0, 0, 0, 0.10)');
+      fc.fillStyle = grad;
+      fc.fillRect(sx, sy, sw, sh);
+      // Subtle horizontal "brushed metal" streaks
+      fc.strokeStyle = 'rgba(255, 255, 255, 0.025)';
+      fc.lineWidth = 1;
+      for (let k = 0; k < 8; k++) {
+        const yy = sy + ((k * 17 + (c2 * 13)) % sh);
+        fc.beginPath();
+        fc.moveTo(sx + 4, yy + 0.5);
+        fc.lineTo(sx + sw - 4, yy + 0.5);
+        fc.stroke();
+      }
+      // Dark seam between sheets (right + bottom edges of this sheet)
+      fc.strokeStyle = '#0a0c10';
+      fc.lineWidth = 1;
+      fc.beginPath();
+      fc.moveTo(sx + sw - 0.5, sy);
+      fc.lineTo(sx + sw - 0.5, sy + sh);
+      fc.moveTo(sx, sy + sh - 0.5);
+      fc.lineTo(sx + sw, sy + sh - 0.5);
+      fc.stroke();
+      // Thin highlight along the top + left of each sheet (inset bevel)
+      fc.strokeStyle = 'rgba(255, 255, 255, 0.06)';
+      fc.beginPath();
+      fc.moveTo(sx + 0.5, sy + sh);
+      fc.lineTo(sx + 0.5, sy + 0.5);
+      fc.lineTo(sx + sw, sy + 0.5);
+      fc.stroke();
+      // Rivets — at the four corners and at edge midpoints
+      const rivetPts = [
+        [sx + 8, sy + 8], [sx + sw - 8, sy + 8],
+        [sx + 8, sy + sh - 8], [sx + sw - 8, sy + sh - 8],
+        [sx + sw / 2, sy + 8], [sx + sw / 2, sy + sh - 8],
+        [sx + 8, sy + sh / 2], [sx + sw - 8, sy + sh / 2],
+      ];
+      for (const [rx, ry] of rivetPts) {
+        // dark socket
+        fc.fillStyle = '#0a0c10';
+        fc.beginPath(); fc.arc(rx, ry, 2.7, 0, Math.PI * 2); fc.fill();
+        // metal head
+        fc.fillStyle = '#3a4050';
+        fc.beginPath(); fc.arc(rx, ry, 1.9, 0, Math.PI * 2); fc.fill();
+        // top-left highlight (gives the rivet a 3D feel)
+        fc.fillStyle = 'rgba(255, 255, 255, 0.45)';
+        fc.beginPath(); fc.arc(rx - 0.5, ry - 0.5, 0.7, 0, Math.PI * 2); fc.fill();
+      }
+    }
+  }
+}
+buildMetalFloor();
+
 // ---------- Audio (procedural, Web Audio API) ----------
 // Sounds are generated at runtime — no audio files needed, single-file kept.
 // AudioContext is lazy-init'd on the first user gesture (autoplay policy).
@@ -5614,15 +5696,9 @@ function render() {
   ctx.save();
   ctx.translate(sx, sy);
 
-  // floor grid
-  ctx.strokeStyle = '#181a22';
-  ctx.lineWidth = 1;
-  for (let x = 0; x < W; x += 40) {
-    ctx.beginPath(); ctx.moveTo(x + 0.5, 0); ctx.lineTo(x + 0.5, H); ctx.stroke();
-  }
-  for (let y = 0; y < H; y += 40) {
-    ctx.beginPath(); ctx.moveTo(0, y + 0.5); ctx.lineTo(W, y + 0.5); ctx.stroke();
-  }
+  // floor — riveted metal sheets, rendered once into an offscreen cache so
+  // the per-frame cost is just a single drawImage blit
+  ctx.drawImage(floorCache, 0, 0);
 
   // blood decals (between grid and entities so zombies walk over them)
   for (const d of decals) {
@@ -8112,18 +8188,38 @@ function drawCheats() {
     return;
   }
   const x = cheatsPanel.x, y = cheatsPanel.y;
-  const w = cheatsPanel.w, btnH = 22, header = 26, secH = 22, sliderH = 22;
-  // Compute height by walking the same layout we'll use below
-  let bodyH = 0;
+  const btnH = 22, header = 26, secHeaderH = 26;
+  // Horizontal layout dimensions: each section is a vertical column.
+  // Collapsed columns are thin (icon only). Expanded columns are wide
+  // (icon + name + items stacked below the header).
+  const colCollapsedW = 34;
+  const colExpandedW = 148;
+  const colStatsExpW = 240;
+  const colGap = 2;
+  const padPanel = 6;
+  const sliderRowH = 22;
+  // Total panel width = sum of column widths + padding + gap
+  let totalCols = padPanel;
+  for (const sec of cheatSections) {
+    totalCols += (sec.open ? colExpandedW : colCollapsedW) + colGap;
+  }
+  totalCols += (slidersOpen ? colStatsExpW : colCollapsedW) + colGap;
+  totalCols += padPanel - colGap; // trim trailing gap, add right pad
+  // Max body height = tallest open column (or just the section header height)
+  let maxBodyH = secHeaderH;
   if (cheatsOpen) {
     for (const sec of cheatSections) {
-      bodyH += secH + 2;
-      if (sec.open) bodyH += sec.items.length * (btnH + 2) + 4;
+      if (sec.open) {
+        maxBodyH = Math.max(maxBodyH, secHeaderH + sec.items.length * (btnH + 2) + 6);
+      }
     }
-    bodyH += secH + 2; // STATS header always reserves a row
-    if (slidersOpen) bodyH += cheatSliders.length * (sliderH + 2) + 6;
+    if (slidersOpen) {
+      maxBodyH = Math.max(maxBodyH, secHeaderH + cheatSliders.length * (sliderRowH + 2) + 6);
+    }
   }
-  const h = cheatsOpen ? header + bodyH + 6 : header;
+  // When closed, the panel is just the master bar at its minimum width.
+  const w = cheatsOpen ? totalCols : 200;
+  const h = cheatsOpen ? header + maxBodyH + 6 : header;
   // Outer panel — slightly more opaque than before, single-pixel border
   ctx.fillStyle = 'rgba(10, 12, 18, 0.96)';
   ctx.fillRect(x, y, w, h);
@@ -8165,153 +8261,152 @@ function drawCheats() {
     return;
   }
 
-  let by = y + header + 4;
-  // Render each section: collapsible header + (when open) buttons
-  for (const sec of cheatSections) {
-    const accent = cheatSectionColor(sec.id);
-    const secRect = { x: x + 6, y: by, w: w - 12, h: secH, sec };
-    sec.headerRect = secRect;
-    const hover = pointInRect(mouse, secRect);
-    // Background — slightly lifted look when open
-    ctx.fillStyle = sec.open ? '#161924' : (hover ? '#1a1d28' : '#10131c');
-    ctx.fillRect(secRect.x, secRect.y, secRect.w, secRect.h);
-    // Left accent stripe in the section's color
+  // ---- Horizontal section columns ----
+  // Each section is rendered as a vertical column. Collapsed = thin
+  // icon-only strip; expanded = wider column with icon + name and items
+  // stacked vertically below the header.
+  let bx = x + padPanel;
+  const colY = y + header + 4;
+
+  const drawColumnHeader = (sec, accent, cw, name) => {
+    const rect = { x: bx, y: colY, w: cw, h: secHeaderH, sec };
+    if (sec) sec.headerRect = rect;
+    const hover = pointInRect(mouse, rect);
+    const open = sec ? sec.open : slidersOpen;
+    // Background
+    ctx.fillStyle = open ? '#161924' : (hover ? '#1a1d28' : '#10131c');
+    ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+    // Top accent stripe (was left-edge in the vertical layout — now top)
     ctx.fillStyle = accent;
-    ctx.fillRect(secRect.x, secRect.y, 3, secRect.h);
-    // Per-section icon — drawn at a fixed slot next to the stripe so it
-    // reads as a "category tag" even when the panel is scanned quickly.
-    drawCheatSectionIcon(sec.id, secRect.x + 16, secRect.y + secRect.h / 2, 12, accent);
-    // Section name in the same accent — colored when expanded for emphasis
-    ctx.fillStyle = sec.open ? accent : '#cfd3da';
-    ctx.font = 'bold 10px system-ui';
-    ctx.textAlign = 'left';
-    ctx.fillText(sec.name.toUpperCase(), secRect.x + 28, secRect.y + 14);
-    // Item-count badge (only when collapsed) + chevron
-    if (!sec.open) {
-      ctx.fillStyle = '#5a5d66';
+    ctx.fillRect(rect.x, rect.y, rect.w, 3);
+    // Icon: centered when collapsed, left-anchored when expanded
+    const iconCx = open ? rect.x + 14 : rect.x + rect.w / 2;
+    const iconCy = open ? rect.y + rect.h / 2 + 1 : rect.y + rect.h / 2 - 2;
+    drawCheatSectionIcon(sec ? sec.id : 'stats', iconCx, iconCy, 12, accent);
+    if (open) {
+      // Name + chevron when expanded
+      ctx.fillStyle = accent;
+      ctx.font = 'bold 9px system-ui';
+      ctx.textAlign = 'left';
+      fitFont(name.toUpperCase(), cw - 30, 'bold 9px system-ui', 7);
+      ctx.fillText(name.toUpperCase(), rect.x + 26, rect.y + 17);
       ctx.font = '9px system-ui';
       ctx.textAlign = 'right';
-      ctx.fillText(`${sec.items.length}`, secRect.x + secRect.w - 18, secRect.y + 14);
+      ctx.fillText('▾', rect.x + cw - 5, rect.y + 17);
+    } else {
+      // Tiny chevron at the bottom hints the column can be opened
+      ctx.fillStyle = '#5a5d66';
+      ctx.font = '7px system-ui';
+      ctx.textAlign = 'center';
+      ctx.fillText('▸', rect.x + rect.w / 2, rect.y + rect.h - 3);
     }
-    ctx.fillStyle = sec.open ? accent : '#5a5d66';
-    ctx.font = '10px system-ui';
-    ctx.textAlign = 'right';
-    ctx.fillText(sec.open ? '▾' : '▸', secRect.x + secRect.w - 6, secRect.y + 14);
     ctx.textAlign = 'left';
-    by += secH + 2;
-    if (!sec.open) {
-      for (const c of sec.items) c.rect = null;
-      continue;
-    }
-    for (const c of sec.items) {
-      const isOn = c.toggle ? c.toggle() : false;
-      const rect = { x: x + 10, y: by, w: w - 20, h: btnH };
-      c.rect = rect;
-      const bhov = pointInRect(mouse, rect);
-      // Body — toggled-on gets a soft green tint, otherwise hover/idle
-      if (isOn) {
-        ctx.fillStyle = '#1e3a26';
-      } else if (bhov) {
-        ctx.fillStyle = '#1c2030';
-      } else {
-        ctx.fillStyle = '#14171f';
-      }
-      ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
-      // Faint left stripe in the section accent — continues the visual link
-      // from header to items
-      ctx.save();
-      ctx.globalAlpha = isOn ? 0.95 : (bhov ? 0.6 : 0.25);
-      ctx.fillStyle = accent;
-      ctx.fillRect(rect.x, rect.y, 2, rect.h);
-      ctx.restore();
-      // Label — left aligned, simple. fitFont keeps long labels from spilling.
-      const labelStr = typeof c.label === 'function' ? c.label() : c.label;
-      ctx.fillStyle = isOn ? '#bff0bf' : (bhov ? '#fff' : '#dfe2e8');
-      const rightPad = c.toggle ? 22 : 10;
-      fitFont(labelStr, rect.w - 14 - rightPad, 'bold 11px system-ui', 9);
-      ctx.textAlign = 'left';
-      ctx.fillText(labelStr, rect.x + 10, rect.y + 15);
-      // Toggle dot — replaces the old "ON/OFF" suffix. Green pulse when on,
-      // dim gray ring when off.
-      if (c.toggle) {
-        const dx = rect.x + rect.w - 12;
-        const dy = rect.y + rect.h / 2;
-        if (isOn) {
-          ctx.fillStyle = 'rgba(139, 224, 139, 0.35)';
-          ctx.beginPath(); ctx.arc(dx, dy, 7, 0, Math.PI * 2); ctx.fill();
-          ctx.fillStyle = '#8be08b';
-          ctx.beginPath(); ctx.arc(dx, dy, 4, 0, Math.PI * 2); ctx.fill();
-        } else {
-          ctx.strokeStyle = '#3a3d46';
-          ctx.lineWidth = 1.5;
-          ctx.beginPath(); ctx.arc(dx, dy, 4.5, 0, Math.PI * 2); ctx.stroke();
+    return rect;
+  };
+
+  for (const sec of cheatSections) {
+    const accent = cheatSectionColor(sec.id);
+    const cw = sec.open ? colExpandedW : colCollapsedW;
+    drawColumnHeader(sec, accent, cw, sec.name);
+
+    if (sec.open) {
+      // Items stacked vertically below the section's header
+      let iy = colY + secHeaderH + 2;
+      for (const c of sec.items) {
+        const isOn = c.toggle ? c.toggle() : false;
+        const rect = { x: bx + 4, y: iy, w: cw - 8, h: btnH };
+        c.rect = rect;
+        const bhov = pointInRect(mouse, rect);
+        // Body fill — toggled-on / hover / idle
+        if (isOn) ctx.fillStyle = '#1e3a26';
+        else if (bhov) ctx.fillStyle = '#1c2030';
+        else ctx.fillStyle = '#14171f';
+        ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+        // Faint left stripe in the section accent
+        ctx.save();
+        ctx.globalAlpha = isOn ? 0.95 : (bhov ? 0.6 : 0.25);
+        ctx.fillStyle = accent;
+        ctx.fillRect(rect.x, rect.y, 2, rect.h);
+        ctx.restore();
+        // Label — fitFont keeps long labels from spilling out of the narrow column
+        const labelStr = typeof c.label === 'function' ? c.label() : c.label;
+        ctx.fillStyle = isOn ? '#bff0bf' : (bhov ? '#fff' : '#dfe2e8');
+        const rightPad = c.toggle ? 18 : 6;
+        fitFont(labelStr, rect.w - 12 - rightPad, 'bold 10px system-ui', 8);
+        ctx.textAlign = 'left';
+        ctx.fillText(labelStr, rect.x + 8, rect.y + 14);
+        // Toggle dot indicator
+        if (c.toggle) {
+          const dx = rect.x + rect.w - 10;
+          const dy = rect.y + rect.h / 2;
+          if (isOn) {
+            ctx.fillStyle = 'rgba(139, 224, 139, 0.35)';
+            ctx.beginPath(); ctx.arc(dx, dy, 6, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = '#8be08b';
+            ctx.beginPath(); ctx.arc(dx, dy, 3.5, 0, Math.PI * 2); ctx.fill();
+          } else {
+            ctx.strokeStyle = '#3a3d46';
+            ctx.lineWidth = 1.5;
+            ctx.beginPath(); ctx.arc(dx, dy, 4, 0, Math.PI * 2); ctx.stroke();
+          }
         }
+        iy += btnH + 2;
       }
-      by += btnH + 2;
+    } else {
+      // Clear stale rects so collapsed columns can't be clicked
+      for (const c of sec.items) c.rect = null;
     }
-    by += 2;
+    bx += cw + colGap;
   }
 
-  // STATS section header — uses the same styled-section visuals
+  // STATS column at the end — wider when expanded so sliders fit
   const statsColor = '#9aa0ab';
-  const slidersHeader = { x: x + 6, y: by, w: w - 12, h: secH };
-  slidersHeaderRect = slidersHeader;
-  const hovHeader = pointInRect(mouse, slidersHeader);
-  ctx.fillStyle = slidersOpen ? '#161924' : (hovHeader ? '#1a1d28' : '#10131c');
-  ctx.fillRect(slidersHeader.x, slidersHeader.y, slidersHeader.w, slidersHeader.h);
-  ctx.fillStyle = statsColor;
-  ctx.fillRect(slidersHeader.x, slidersHeader.y, 3, slidersHeader.h);
-  drawCheatSectionIcon('stats', slidersHeader.x + 16, slidersHeader.y + slidersHeader.h / 2, 12, statsColor);
-  ctx.fillStyle = slidersOpen ? statsColor : '#cfd3da';
-  ctx.font = 'bold 10px system-ui';
-  ctx.textAlign = 'left';
-  ctx.fillText('STATS', slidersHeader.x + 28, slidersHeader.y + 14);
-  ctx.fillStyle = slidersOpen ? statsColor : '#5a5d66';
-  ctx.font = '10px system-ui';
-  ctx.textAlign = 'right';
-  ctx.fillText(slidersOpen ? '▾' : '▸', slidersHeader.x + slidersHeader.w - 6, slidersHeader.y + 14);
-  ctx.textAlign = 'left';
-  by += secH + 2;
+  const cwStats = slidersOpen ? colStatsExpW : colCollapsedW;
+  slidersHeaderRect = drawColumnHeader(null, statsColor, cwStats, 'Stats');
 
-  if (!slidersOpen) {
+  if (slidersOpen) {
+    // Sliders stacked vertically inside the STATS column
+    let iy = colY + secHeaderH + 2;
+    const trackX = bx + 92;
+    const trackW = cwStats - 92 - 38;
+    const knobR = 5;
+    for (const s of cheatSliders) {
+      const rect = { x: bx + 4, y: iy, w: cwStats - 8, h: sliderRowH, trackX, trackW, trackY: iy + 11 };
+      s.rect = rect;
+      // label
+      ctx.fillStyle = '#9aa0ab';
+      ctx.font = 'bold 10px system-ui';
+      ctx.textAlign = 'left';
+      ctx.fillText(s.label, bx + 8, iy + 14);
+      // track
+      ctx.fillStyle = '#1c1f28';
+      ctx.fillRect(trackX, iy + 8, trackW, 6);
+      ctx.strokeStyle = '#33363f';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(trackX, iy + 8, trackW, 6);
+      // fill + knob
+      const val = s.get();
+      const t = Math.max(0, Math.min(1, (val - s.min) / (s.max - s.min)));
+      ctx.fillStyle = '#5a87c4';
+      ctx.fillRect(trackX, iy + 8, trackW * t, 6);
+      ctx.fillStyle = sliderDrag && sliderDrag.slider === s ? '#fff' : '#88aadd';
+      ctx.beginPath();
+      ctx.arc(trackX + trackW * t, iy + 11, knobR, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#0a0a0a';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      // value
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 10px system-ui';
+      ctx.textAlign = 'right';
+      const display = s.step < 1 ? val.toFixed(1) : Math.round(val).toString();
+      ctx.fillText(display, bx + cwStats - 6, iy + 14);
+      ctx.textAlign = 'left';
+      iy += sliderRowH + 2;
+    }
+  } else {
     for (const s of cheatSliders) s.rect = null;
-    return;
-  }
-
-  // Sliders
-  const trackX = x + 60, trackW = w - 60 - 36, knobR = 5;
-  ctx.font = 'bold 10px system-ui';
-  for (const s of cheatSliders) {
-    const rect = { x: x + 8, y: by, w: w - 16, h: sliderH, trackX, trackW, trackY: by + 11 };
-    s.rect = rect;
-    // label
-    ctx.fillStyle = '#9aa0ab';
-    ctx.textAlign = 'left';
-    ctx.fillText(s.label, x + 10, by + 14);
-    // track
-    ctx.fillStyle = '#1c1f28';
-    ctx.fillRect(trackX, by + 8, trackW, 6);
-    ctx.strokeStyle = '#33363f';
-    ctx.strokeRect(trackX, by + 8, trackW, 6);
-    // fill + knob
-    const val = s.get();
-    const t = Math.max(0, Math.min(1, (val - s.min) / (s.max - s.min)));
-    ctx.fillStyle = '#5a87c4';
-    ctx.fillRect(trackX, by + 8, trackW * t, 6);
-    ctx.fillStyle = sliderDrag && sliderDrag.slider === s ? '#fff' : '#88aadd';
-    ctx.beginPath();
-    ctx.arc(trackX + trackW * t, by + 11, knobR, 0, Math.PI*2);
-    ctx.fill();
-    ctx.strokeStyle = '#0a0a0a';
-    ctx.lineWidth = 1;
-    ctx.stroke();
-    // value
-    ctx.fillStyle = '#fff';
-    ctx.textAlign = 'right';
-    const display = s.step < 1 ? val.toFixed(1) : Math.round(val).toString();
-    ctx.fillText(display, x + w - 8, by + 14);
-    ctx.textAlign = 'left';
-    by += sliderH + 2;
   }
 }
 
