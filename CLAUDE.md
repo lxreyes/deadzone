@@ -23,6 +23,9 @@ There are no other source files, configs, or dependencies. The user prefers it s
 - `Space` or click **START NOW** — skip the intermission early
 - `R` — hard reset (wipes everything, restores base upgrade costs, weapon → pistol)
 - `M` — toggle mute
+- `Shift` — dash (permanent ability, cooldown ~1.4s, 0.45s i-frames)
+- `B` — toggle build mode (wall / turret / spike trap; place on grid with click)
+- `Space` or click `START NOW` — manually begin the next wave (no auto-advance)
 
 Cheats panel (top-left): hidden until the player types `1 2 3 4` outside the shop (`cheatBuffer` is a rolling 4-char window). Once unlocked, click buttons. God Mode toggles a flag checked in `updateZombies`; Mute toggles `soundMuted`.
 
