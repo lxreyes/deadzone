@@ -29,6 +29,151 @@ const c = document.getElementById('c');
 const ctx = c.getContext('2d');
 const W = c.width, H = c.height;
 
+// ---------- Audio (procedural, Web Audio API) ----------
+// Sounds are generated at runtime — no audio files needed, single-file kept.
+// AudioContext is lazy-init'd on the first user gesture (autoplay policy).
+let audioCtx = null;
+let masterGain = null;
+let soundMuted = false;
+const sfxLast = {};
+
+function ensureAudio() {
+  if (audioCtx) return;
+  try {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    masterGain = audioCtx.createGain();
+    masterGain.gain.value = 0.32;
+    masterGain.connect(audioCtx.destination);
+  } catch (e) { /* environment lacks Web Audio; sfx becomes a no-op */ }
+}
+function resumeAudio() {
+  if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+}
+// Quick tone with linear attack + exponential decay; optional pitch sweep.
+function tone({ freq = 440, type = 'square', dur = 0.1, vol = 0.3, sweep = 0, delay = 0, attack = 0.005 } = {}) {
+  if (!audioCtx || soundMuted) return;
+  const t0 = audioCtx.currentTime + delay;
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.type = type;
+  osc.frequency.setValueAtTime(freq, t0);
+  if (sweep) osc.frequency.exponentialRampToValueAtTime(Math.max(20, freq + sweep), t0 + dur);
+  gain.gain.setValueAtTime(0, t0);
+  gain.gain.linearRampToValueAtTime(vol, t0 + attack);
+  gain.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
+  osc.connect(gain); gain.connect(masterGain);
+  osc.start(t0); osc.stop(t0 + dur + 0.05);
+}
+// White-noise burst through optional low/high-pass filters.
+function noise({ dur = 0.15, vol = 0.25, lowpass = 0, hipass = 0, delay = 0 } = {}) {
+  if (!audioCtx || soundMuted) return;
+  const t0 = audioCtx.currentTime + delay;
+  const n = Math.floor(audioCtx.sampleRate * dur);
+  const buffer = audioCtx.createBuffer(1, n, audioCtx.sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let i = 0; i < n; i++) data[i] = Math.random() * 2 - 1;
+  const source = audioCtx.createBufferSource();
+  source.buffer = buffer;
+  let node = source;
+  if (lowpass) {
+    const f = audioCtx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = lowpass;
+    node.connect(f); node = f;
+  }
+  if (hipass) {
+    const f = audioCtx.createBiquadFilter(); f.type = 'highpass'; f.frequency.value = hipass;
+    node.connect(f); node = f;
+  }
+  const gain = audioCtx.createGain();
+  gain.gain.setValueAtTime(vol, t0);
+  gain.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
+  node.connect(gain); gain.connect(masterGain);
+  source.start(t0); source.stop(t0 + dur + 0.05);
+}
+// Throttle rapid-fire sounds (zombieHit, coin) so a crowd doesn't crackle.
+function sfxThrottle(name, gapMs) {
+  const now = performance.now();
+  if (sfxLast[name] && now - sfxLast[name] < gapMs) return false;
+  sfxLast[name] = now;
+  return true;
+}
+
+// Game-event sound dispatch. Each key plays a short composed sound.
+const SFX = {
+  shoot(weapon) {
+    if (weapon === 'shotgun') {
+      noise({ dur: 0.18, vol: 0.4, lowpass: 1400 });
+      tone({ freq: 110, type: 'square', dur: 0.12, vol: 0.22, sweep: -60 });
+    } else if (weapon === 'rifle') {
+      noise({ dur: 0.1, vol: 0.32, lowpass: 2400 });
+      tone({ freq: 200, type: 'sawtooth', dur: 0.08, vol: 0.22, sweep: -120 });
+    } else if (weapon === 'smg') {
+      tone({ freq: 760, type: 'square', dur: 0.05, vol: 0.18, sweep: -180 });
+      noise({ dur: 0.04, vol: 0.12, lowpass: 2000, hipass: 600 });
+    } else if (weapon === 'rocket') {
+      tone({ freq: 70, type: 'sawtooth', dur: 0.35, vol: 0.3, sweep: -20 });
+      noise({ dur: 0.25, vol: 0.25, lowpass: 600 });
+    } else if (weapon === 'chicken') {
+      tone({ freq: 320, type: 'triangle', dur: 0.05, vol: 0.25, sweep: 80 });
+      tone({ freq: 380, type: 'triangle', dur: 0.05, vol: 0.22, sweep: 60, delay: 0.07 });
+    } else if (weapon === 'banana') {
+      tone({ freq: 180, type: 'sawtooth', dur: 0.22, vol: 0.22, sweep: 240 });
+    } else if (weapon === 'duck') {
+      tone({ freq: 520, type: 'square', dur: 0.14, vol: 0.25, sweep: -300 });
+    } else { // pistol
+      tone({ freq: 540, type: 'square', dur: 0.06, vol: 0.22, sweep: -240 });
+      noise({ dur: 0.04, vol: 0.16, lowpass: 1800 });
+    }
+  },
+  zombieHit() { if (sfxThrottle('zombieHit', 30)) tone({ freq: 140, type: 'square', dur: 0.05, vol: 0.14, sweep: -40 }); },
+  zombieDie() { if (sfxThrottle('zombieDie', 35)) {
+    noise({ dur: 0.18, vol: 0.2, lowpass: 400 });
+    tone({ freq: 90, type: 'sawtooth', dur: 0.16, vol: 0.14, sweep: -40 });
+  } },
+  playerHurt() { if (sfxThrottle('playerHurt', 220)) tone({ freq: 240, type: 'sawtooth', dur: 0.22, vol: 0.3, sweep: -80 }); },
+  explosion() {
+    noise({ dur: 0.45, vol: 0.4, lowpass: 600 });
+    tone({ freq: 55, type: 'sawtooth', dur: 0.4, vol: 0.28, sweep: -20 });
+  },
+  coin() { if (sfxThrottle('coin', 28)) {
+    tone({ freq: 1040, type: 'sine', dur: 0.05, vol: 0.12 });
+    tone({ freq: 1480, type: 'sine', dur: 0.08, vol: 0.12, delay: 0.04 });
+  } },
+  pickup() {
+    tone({ freq: 520, type: 'sine', dur: 0.08, vol: 0.22, sweep: 500 });
+    tone({ freq: 880, type: 'sine', dur: 0.1, vol: 0.18, delay: 0.06 });
+  },
+  crate() { tone({ freq: 660, type: 'sine', dur: 0.12, vol: 0.22, sweep: 400 }); },
+  swap() { tone({ freq: 320, type: 'square', dur: 0.06, vol: 0.2, sweep: 300 }); },
+  swing() { noise({ dur: 0.16, vol: 0.22, lowpass: 2400, hipass: 400 }); },
+  throwBlade() { tone({ freq: 520, type: 'sawtooth', dur: 0.12, vol: 0.18, sweep: 400 }); },
+  chestOpen() {
+    tone({ freq: 600, type: 'sine', dur: 0.1, vol: 0.25 });
+    tone({ freq: 900, type: 'sine', dur: 0.1, vol: 0.25, delay: 0.07 });
+    tone({ freq: 1200, type: 'sine', dur: 0.22, vol: 0.25, delay: 0.14 });
+  },
+  perkPick() {
+    tone({ freq: 440, type: 'triangle', dur: 0.08, vol: 0.22 });
+    tone({ freq: 660, type: 'triangle', dur: 0.08, vol: 0.22, delay: 0.06 });
+    tone({ freq: 880, type: 'triangle', dur: 0.16, vol: 0.22, delay: 0.12 });
+  },
+  waveStart() {
+    tone({ freq: 200, type: 'sawtooth', dur: 0.25, vol: 0.28, sweep: 80 });
+    noise({ dur: 0.12, vol: 0.15, lowpass: 400 });
+  },
+  bossSpawn() {
+    tone({ freq: 60, type: 'sawtooth', dur: 0.55, vol: 0.32 });
+    tone({ freq: 80, type: 'sawtooth', dur: 0.55, vol: 0.32, delay: 0.18 });
+    tone({ freq: 50, type: 'sawtooth', dur: 0.7,  vol: 0.28, delay: 0.36 });
+  },
+  uiClick() { tone({ freq: 800, type: 'square', dur: 0.025, vol: 0.12 }); },
+  unlock() {
+    tone({ freq: 380, type: 'square', dur: 0.08, vol: 0.2 });
+    tone({ freq: 570, type: 'square', dur: 0.08, vol: 0.2, delay: 0.07 });
+    tone({ freq: 760, type: 'square', dur: 0.14, vol: 0.2, delay: 0.14 });
+  },
+  death() { tone({ freq: 220, type: 'sawtooth', dur: 0.6, vol: 0.3, sweep: -150 }); },
+};
+
 // ---------- Player ----------
 const SPAWN = { x: 90, y: H / 2 };
 const player = {
@@ -211,6 +356,7 @@ const cheats = [
       player.hp = player.maxHp;
     } },
   { label: 'God Mode', toggle: () => godMode, run() { godMode = !godMode; } },
+  { label: 'Mute', toggle: () => soundMuted, run() { soundMuted = !soundMuted; } },
 ];
 
 const shop = { x: W - 220, y: 60, w: 180, h: 200 };
@@ -630,8 +776,10 @@ function darken(hex, amount = 0.4) {
 }
 
 addEventListener('keydown', e => {
+  ensureAudio(); resumeAudio();
   keys[e.code] = true;
   if (e.code === 'KeyR') hardReset();
+  if (e.code === 'KeyM') { soundMuted = !soundMuted; if (!soundMuted) SFX.uiClick(); }
   // card pick takes priority over everything else digit-related
   if (pendingCards) {
     if (e.code === 'Digit1') { pickCard(0); return; }
@@ -657,6 +805,7 @@ addEventListener('keydown', e => {
       cheatsOpen = true;
       floaters.push({ x: 98, y: 200, text: 'CHEATS UNLOCKED', life: 2.8, color: '#8be08b' });
       shake(6);
+      SFX.unlock();
     }
   }
 });
@@ -668,6 +817,7 @@ c.addEventListener('mousemove', e => {
   mouse.y = (e.clientY - r.top)  * (H / r.height);
 });
 c.addEventListener('mousedown', e => {
+  ensureAudio(); resumeAudio();
   // right-click triggers the secondary blade
   if (e.button === 2) {
     if (!pendingCards && !inShop()) useSecondary();
@@ -684,11 +834,12 @@ c.addEventListener('mousedown', e => {
   // cheats panel takes priority
   if (cheatsHeaderRect && pointInRect(mouse, cheatsHeaderRect)) {
     cheatsOpen = !cheatsOpen;
+    SFX.uiClick();
     return;
   }
   if (cheatsOpen) {
     for (const c of cheats) {
-      if (c.rect && pointInRect(mouse, c.rect)) { c.run(); return; }
+      if (c.rect && pointInRect(mouse, c.rect)) { SFX.uiClick(); c.run(); return; }
     }
   }
   if (intermission > 0 && pointInRect(mouse, skipBtn)) {
@@ -803,6 +954,7 @@ function killZombie(z) {
     player.hp = Math.min(player.maxHp, player.hp + player.special.vampire);
   }
   if (z.isBoss) spawnBossChest(z.x, z.y);
+  SFX.zombieDie();
 }
 
 function dropCoinsFor(z) {
@@ -900,9 +1052,11 @@ function beginNextWave() {
   if (isBossWave) {
     waveZombiesToSpawn = 0;
     spawnBoss();
+    SFX.bossSpawn();
   } else {
     waveZombiesToSpawn = 5 + Math.floor(wave * 1.8);
     waveSpawnTimer = 0.4;
+    SFX.waveStart();
   }
   // each wave gets a free money crate somewhere in the arena
   spawnMoneyCrate();
@@ -934,6 +1088,7 @@ function pickCard(idx) {
   const key = pendingCards[idx];
   if (!key) return;
   const def = SPECIAL_UPGRADES[key];
+  SFX.perkPick();
   def.apply();
   player.specialLevels[key] = (player.specialLevels[key] || 0) + 1;
   // celebratory burst at the picked card
@@ -982,6 +1137,7 @@ function tryShoot(nowSec) {
   const interval = 1 / fr;
   if (nowSec - player.lastShot < interval) return;
   player.lastShot = nowSec;
+  SFX.shoot(player.weapon);
 
   const dx = mouse.x - player.x, dy = mouse.y - player.y;
   const baseAng = Math.atan2(dy, dx);
@@ -1095,9 +1251,11 @@ function swingMelee(def, ang) {
   }
   slashes.push({ x: player.x, y: player.y, ang, life: 0.22, max: 0.22, range: def.range, arc: def.arc, color: def.color });
   shake(4);
+  SFX.swing();
 }
 
 function throwBlades(def, ang) {
+  SFX.throwBlade();
   for (let i = 0; i < def.shots; i++) {
     const a = ang + (i - (def.shots - 1) / 2) * def.spread;
     const { dmg, isCrit } = rollPerkedDamage(def.damage);
@@ -1120,6 +1278,7 @@ function throwBlades(def, ang) {
 }
 
 function throwChakram(def, ang) {
+  SFX.throwBlade();
   const { dmg, isCrit } = rollPerkedDamage(def.damage);
   bullets.push({
     x: player.x + Math.cos(ang) * (player.r + 6),
@@ -1172,6 +1331,7 @@ function explode(x, y, radius, dmg) {
     particles.push({ x, y, vx: Math.cos(a)*s, vy: Math.sin(a)*s, life: 0.5 + Math.random()*0.3, color: '#ff8040' });
   }
   shake(14);
+  SFX.explosion();
 }
 
 function detonateNuke(x, y) {
@@ -1231,6 +1391,7 @@ function updatePickups(dt) {
     const dx = player.x - p.x, dy = player.y - p.y;
     if (dx*dx + dy*dy < (player.r + 14) * (player.r + 14)) {
       def.apply();
+      SFX.pickup();
       for (let k = 0; k < 18; k++) {
         const a = Math.random() * Math.PI * 2;
         const s = 100 + Math.random() * 200;
@@ -1255,6 +1416,7 @@ function spawnBossChest(x, y) {
 }
 
 function openChest(c) {
+  SFX.chestOpen();
   const perms = upgrades.filter(u => u.type === 'perm');
   const pick = perms[Math.floor(Math.random() * perms.length)];
   pick.buy(); // applies effect AND bumps cost — consistent with shop purchases
@@ -1379,6 +1541,7 @@ function updateZombies(dt) {
       } else {
         player.hp -= z.damage * dt;
         flashRed = Math.max(flashRed, Math.min(0.35, z.damage * dt * 0.03));
+        SFX.playerHurt();
       }
     }
     // Thorns hits any zombie touching the player, even through invuln/shield.
@@ -1467,6 +1630,7 @@ function updateBullets(dt) {
         const dmgDealt = Math.min(b.damage, z.hp);
         z.hp -= b.damage;
         b.hits.add(z);
+        SFX.zombieHit();
         // lifesteal — heal a fraction of damage actually dealt
         if (player.special.lifesteal) {
           player.hp = Math.min(player.maxHp, player.hp + dmgDealt * player.special.lifesteal);
@@ -1567,6 +1731,7 @@ function updateGuns(dt) {
 
 function doSwapWeapon() {
   if (!nearbyGun || nearbyGun.weapon === player.weapon) return;
+  SFX.swap();
   const old = player.weapon;
   const gx = nearbyGun.x, gy = nearbyGun.y;
   const newCol = WEAPONS[nearbyGun.weapon].color;
@@ -1591,6 +1756,7 @@ function updateCrates(dt) {
     const dx = player.x - cr.x, dy = player.y - cr.y;
     if (dx*dx + dy*dy < (player.r + 14) * (player.r + 14)) {
       player.money += cr.value;
+      SFX.crate();
       for (let k = 0; k < 14; k++) {
         const a = Math.random() * Math.PI * 2;
         const s = 80 + Math.random() * 180;
@@ -1635,6 +1801,7 @@ function updateCoins(dt) {
     }
     if (d < player.r + 5) {
       player.money += k.value;
+      SFX.coin();
       coins.splice(i, 1);
     } else if (k.life <= 0) {
       coins.splice(i, 1);
@@ -1659,6 +1826,7 @@ function checkDeath() {
 
   deaths++;
   bestKills = Math.max(bestKills, kills);
+  SFX.death();
 
   // drop weapon (pistol is infinite default, not a real drop)
   if (player.weapon !== 'pistol') {

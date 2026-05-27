@@ -1,6 +1,6 @@
 # DEADZONE
 
-Top-down, wave-based zombie survival shooter. Single self-contained HTML file. Vanilla JS + Canvas 2D, no build step, no dependencies, no audio.
+Top-down, wave-based zombie survival shooter. Single self-contained HTML file. Vanilla JS + Canvas 2D + Web Audio API (procedural SFX only — no audio files). No build step, no dependencies.
 
 ## Run
 
@@ -22,8 +22,13 @@ There are no other source files, configs, or dependencies. The user prefers it s
 - `E` or click the green **Swap** button — equip a weapon pickup you're hovering over
 - `Space` or click **START NOW** — skip the intermission early
 - `R` — hard reset (wipes everything, restores base upgrade costs, weapon → pistol)
+- `M` — toggle mute
 
-Cheats panel (top-left): click buttons. God Mode toggles a flag checked in `updateZombies`.
+Cheats panel (top-left): hidden until the player types `1 2 3 4` outside the shop (`cheatBuffer` is a rolling 4-char window). Once unlocked, click buttons. God Mode toggles a flag checked in `updateZombies`; Mute toggles `soundMuted`.
+
+## Audio
+
+`AudioContext` is lazy-init'd on the first user gesture (`ensureAudio()` + `resumeAudio()` in the keydown/mousedown handlers) to satisfy autoplay policy. Two primitives — `tone({freq, type, dur, vol, sweep, delay})` and `noise({dur, vol, lowpass, hipass, delay})` — feed a `masterGain` (0.32) routed to destination. The `SFX` dispatch dict has one entry per game event (`shoot(weapon)`, `zombieHit`, `zombieDie`, `playerHurt`, `explosion`, `coin`, `pickup`, `crate`, `swap`, `swing`, `throwBlade`, `chestOpen`, `perkPick`, `waveStart`, `bossSpawn`, `uiClick`, `unlock`, `death`). Rapid-fire events (`zombieHit`, `zombieDie`, `coin`, `playerHurt`) call `sfxThrottle(name, gapMs)` to avoid crackle when a crowd dies at once. `soundMuted` is a global gate.
 
 ## Mental model
 
