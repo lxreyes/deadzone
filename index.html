@@ -648,6 +648,45 @@ const SECONDARIES = {
 };
 const SECONDARY_KEYS = Object.keys(SECONDARIES);
 
+// ---------- Pets (immortal companions, buy-once from the shop) ----------
+// Each pet follows the player and engages nearby zombies on its own. Unlike
+// secondaries' tome-summons, pets never decay and never die — they exist
+// until hardReset wipes them.
+//   kind: 'melee' (contact damage with cooldown) or 'ranged' (auto-fires a
+//         small bullet at the nearest zombie within `range`).
+const PETS = {
+  dog: {
+    name: 'Dog',         color: '#c08858', cost: 400,
+    kind: 'melee', speed: 240, dmg: 32, hitR: 14, attackCd: 0.55, range: 260,
+    desc: 'Loyal hound · fast bite',
+  },
+  owl: {
+    name: 'Owl',         color: '#f0d0a0', cost: 480,
+    kind: 'ranged', speed: 200, dmg: 14, attackCd: 0.65, range: 320,
+    bulletSpeed: 720, bulletLife: 0.7, bulletColor: '#fff0c8',
+    desc: 'Flying scout · pecks from afar',
+  },
+  robot: {
+    name: 'Combat Bot',  color: '#9bb0c8', cost: 700,
+    kind: 'ranged', speed: 160, dmg: 36, attackCd: 1.2, range: 360,
+    bulletSpeed: 820, bulletLife: 0.8, bulletColor: '#9bf0ff',
+    desc: 'Slow but heavy laser shots',
+  },
+  ghost: {
+    name: 'Ghost',       color: '#c8e8ff', cost: 500,
+    kind: 'melee', speed: 180, dmg: 18, hitR: 22, attackCd: 0.25, range: 240,
+    desc: 'Phases through walls · steady tick damage',
+  },
+  drone: {
+    name: 'Sentry Drone', color: '#80ffe0', cost: 600,
+    kind: 'orbit', speed: 0, dmg: 18, attackCd: 0.5, range: 280,
+    bulletSpeed: 760, bulletLife: 0.8, bulletColor: '#80ffe0',
+    orbitRadius: 60, orbitSpeed: 2.4,
+    desc: 'Orbits you · auto-shoots the nearest threat',
+  },
+};
+const PET_KEYS = Object.keys(PETS);
+
 // ---------- World ----------
 const bullets = [];
 const zombies = [];
@@ -666,6 +705,8 @@ const bladeCrates = []; // pickups that swap player.secondary — { x, y, second
 const buildings = []; // placed buildings — { type, x, y, hp, hpMax, ... }
 const summons = [];   // friendly summoned units — { kind, x, y, vx, vy, hp, life, dmg }
 const healFields = [];// dropped healing pads — { x, y, r, life, max, hps }
+const pets = [];      // permanent immortal pet companions — { id, x, y, vx, vy, lastAttack, target }
+const ownedPets = new Set(); // tracks which pet types are already owned (buy-once)
 const decals  = []; // blood splats on the floor
 
 // Building catalog. Buildings snap to the 40px floor grid; w/h govern both
@@ -798,7 +839,7 @@ let shopBuyRects = [];     // [{ rect, action: () => void }]
 // Per-tab scroll offset (pixels). Clamped each frame against the rendered
 // content height so switching tabs or buying items can't leave the view
 // stuck past the end of the list.
-const shopScroll = { upgrades: 0, arsenal: 0, storage: 0 };
+const shopScroll = { upgrades: 0, arsenal: 0, storage: 0, pets: 0 };
 let shopBodyRect = null;   // body region currently being scrolled (for wheel hit-test)
 let shopMaxScroll = 0;     // max scroll value for the active tab this frame
 
@@ -3152,6 +3193,240 @@ function updateSummons(dt) {
   }
 }
 
+function updatePets(dt) {
+  for (const p of pets) {
+    const def = PETS[p.id];
+    if (!def) continue;
+    // Acquire / refresh target — nearest zombie in range
+    let near = null, bd2 = def.range * def.range;
+    for (const z of zombies) {
+      const dx = z.x - p.x, dy = z.y - p.y;
+      const d2 = dx * dx + dy * dy;
+      if (d2 < bd2) { bd2 = d2; near = z; }
+    }
+    p.target = near;
+    if (def.kind === 'orbit') {
+      // Orbit smoothly around the player; aim is independent.
+      p.orbitAng = (p.orbitAng || 0) + def.orbitSpeed * dt;
+      p.x = player.x + Math.cos(p.orbitAng) * def.orbitRadius;
+      p.y = player.y + Math.sin(p.orbitAng) * def.orbitRadius;
+    } else {
+      // Decide what to home toward: a target zombie if any, else the player
+      // (with a small lag distance so the pet doesn't sit on top of them).
+      let tx, ty, arriveR;
+      if (near) { tx = near.x; ty = near.y; arriveR = (def.hitR || 8) + near.r; }
+      else      { tx = player.x; ty = player.y; arriveR = 40; }
+      const dx = tx - p.x, dy = ty - p.y;
+      const d = Math.hypot(dx, dy) || 1;
+      if (d > arriveR) {
+        p.x += (dx / d) * def.speed * dt;
+        p.y += (dy / d) * def.speed * dt;
+      }
+      // Save aim heading for the sprite
+      p.heading = Math.atan2(dy, dx);
+    }
+    // Attack
+    p.lastAttack = (p.lastAttack || 0) + dt;
+    if (near && p.lastAttack >= def.attackCd) {
+      if (def.kind === 'melee') {
+        const dx = near.x - p.x, dy = near.y - p.y;
+        const d = Math.hypot(dx, dy);
+        if (d < (def.hitR || 12) + near.r) {
+          near.hp -= def.dmg;
+          p.lastAttack = 0;
+          // light particle burst on hit
+          for (let k = 0; k < 4; k++) {
+            const a = Math.random() * Math.PI * 2;
+            const s = 60 + Math.random() * 80;
+            particles.push({ x: near.x, y: near.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s, life: 0.3, color: def.color });
+          }
+          if (near.hp <= 0) {
+            const idx = zombies.indexOf(near);
+            if (idx >= 0) { killZombie(near); zombies.splice(idx, 1); }
+          }
+        }
+      } else {
+        // Fire a pet bullet at the target — uses the regular bullets pipeline
+        // so all existing hit/explode logic applies. petBullet=true flags the
+        // bullet so we can recolor it later.
+        const dx = near.x - p.x, dy = near.y - p.y;
+        const d = Math.hypot(dx, dy) || 1;
+        bullets.push({
+          x: p.x, y: p.y,
+          vx: (dx / d) * def.bulletSpeed,
+          vy: (dy / d) * def.bulletSpeed,
+          damage: def.dmg, pierce: 0,
+          hits: new Set(),
+          life: def.bulletLife,
+          color: def.bulletColor || def.color,
+          explosive: false, blastR: 0, blastDmg: 0,
+          bulletKind: null, bounces: 0, leavesSlick: false, spawnChicks: 0,
+          chains: 0, chainRange: 0,
+          orbitAngle: 0, orbitRadius: 0, orbitSpeed: 0,
+          homing: false, isCrit: false, petBullet: true,
+        });
+        p.lastAttack = 0;
+      }
+    }
+  }
+}
+
+// Draw a single pet at (cx, cy) at the given pixel size. Used by both the
+// in-world render and the shop preview icon — the only difference is the
+// "facing" heading (world uses the live one, the shop preview faces right).
+function drawPet(id, cx, cy, size, heading = 0) {
+  const def = PETS[id];
+  if (!def) return;
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(heading);
+  const s = size * 0.5;
+  ctx.strokeStyle = '#15151a';
+  ctx.lineWidth = 1;
+  switch (id) {
+    case 'dog': {
+      // shadow
+      ctx.fillStyle = 'rgba(0,0,0,0.25)';
+      ctx.beginPath(); ctx.ellipse(0, s * 0.6, s * 0.7, s * 0.18, 0, 0, Math.PI * 2); ctx.fill();
+      // body
+      ctx.fillStyle = def.color;
+      ctx.fillRect(-s * 0.6, -s * 0.25, s * 1.2, s * 0.5);
+      ctx.strokeRect(-s * 0.6, -s * 0.25, s * 1.2, s * 0.5);
+      // head
+      ctx.fillStyle = def.color;
+      ctx.beginPath(); ctx.arc(s * 0.7, 0, s * 0.32, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      // snout
+      ctx.fillStyle = '#1a1a1a';
+      ctx.beginPath(); ctx.arc(s * 0.95, s * 0.05, s * 0.08, 0, Math.PI * 2); ctx.fill();
+      // ear
+      ctx.fillStyle = '#7a4a28';
+      ctx.beginPath();
+      ctx.moveTo(s * 0.5, -s * 0.3); ctx.lineTo(s * 0.4, -s * 0.55); ctx.lineTo(s * 0.7, -s * 0.3);
+      ctx.closePath(); ctx.fill();
+      // tail
+      ctx.fillStyle = def.color;
+      ctx.fillRect(-s * 0.7, -s * 0.1, -s * 0.2, s * 0.18);
+      break;
+    }
+    case 'owl': {
+      // round body
+      ctx.fillStyle = def.color;
+      ctx.beginPath(); ctx.arc(0, 0, s * 0.55, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      // wings (animate a bit)
+      const wingT = Math.sin(gameTime * 8) * 0.25;
+      ctx.fillStyle = '#a06a3a';
+      ctx.save();
+      ctx.rotate(wingT);
+      ctx.fillRect(-s * 0.65, -s * 0.1, s * 0.35, s * 0.35);
+      ctx.restore();
+      ctx.save();
+      ctx.rotate(-wingT);
+      ctx.fillRect(s * 0.3, -s * 0.1, s * 0.35, s * 0.35);
+      ctx.restore();
+      // eyes
+      ctx.fillStyle = '#fff';
+      ctx.beginPath(); ctx.arc(-s * 0.18, -s * 0.1, s * 0.16, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc( s * 0.18, -s * 0.1, s * 0.16, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#1a1a1a';
+      ctx.beginPath(); ctx.arc(-s * 0.18, -s * 0.1, s * 0.07, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc( s * 0.18, -s * 0.1, s * 0.07, 0, Math.PI * 2); ctx.fill();
+      // beak
+      ctx.fillStyle = '#ff9d3a';
+      ctx.beginPath();
+      ctx.moveTo(0, s * 0.05); ctx.lineTo(s * 0.1, s * 0.2); ctx.lineTo(-s * 0.1, s * 0.2);
+      ctx.closePath(); ctx.fill();
+      break;
+    }
+    case 'robot': {
+      // chassis
+      ctx.fillStyle = def.color;
+      ctx.fillRect(-s * 0.55, -s * 0.5, s * 1.1, s);
+      ctx.strokeRect(-s * 0.55, -s * 0.5, s * 1.1, s);
+      // visor strip
+      ctx.fillStyle = '#1a1a22';
+      ctx.fillRect(-s * 0.5, -s * 0.35, s, s * 0.2);
+      // glowing eye
+      ctx.fillStyle = '#9bf0ff';
+      ctx.fillRect(-s * 0.15, -s * 0.3, s * 0.3, s * 0.1);
+      // shoulder cannon barrel facing right
+      ctx.fillStyle = '#222a32';
+      ctx.fillRect(s * 0.55, -s * 0.1, s * 0.5, s * 0.2);
+      ctx.fillStyle = '#9bf0ff';
+      ctx.fillRect(s * 1.05, -s * 0.05, 3, s * 0.1);
+      // treads on the bottom
+      ctx.fillStyle = '#111';
+      ctx.fillRect(-s * 0.55, s * 0.4, s * 1.1, s * 0.15);
+      break;
+    }
+    case 'ghost': {
+      // translucent body
+      ctx.globalAlpha = 0.75;
+      ctx.fillStyle = def.color;
+      // bell shape
+      ctx.beginPath();
+      ctx.arc(0, -s * 0.1, s * 0.55, Math.PI, Math.PI * 2);
+      ctx.lineTo(s * 0.55, s * 0.45);
+      ctx.lineTo(s * 0.3, s * 0.25);
+      ctx.lineTo(0, s * 0.5);
+      ctx.lineTo(-s * 0.3, s * 0.25);
+      ctx.lineTo(-s * 0.55, s * 0.45);
+      ctx.closePath();
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      // eyes
+      ctx.fillStyle = '#1a1a22';
+      ctx.beginPath(); ctx.arc(-s * 0.18, -s * 0.15, s * 0.08, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc( s * 0.18, -s * 0.15, s * 0.08, 0, Math.PI * 2); ctx.fill();
+      break;
+    }
+    case 'drone': {
+      // central core
+      ctx.fillStyle = def.color;
+      ctx.beginPath(); ctx.arc(0, 0, s * 0.35, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      // four arms with rotors
+      const rot = gameTime * 6;
+      for (let i = 0; i < 4; i++) {
+        const a = (i / 4) * Math.PI * 2;
+        const ex = Math.cos(a) * s * 0.6;
+        const ey = Math.sin(a) * s * 0.6;
+        ctx.strokeStyle = '#222';
+        ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(ex, ey); ctx.stroke();
+        // rotor blur
+        ctx.save();
+        ctx.translate(ex, ey);
+        ctx.rotate(rot + i);
+        ctx.fillStyle = 'rgba(255,255,255,0.45)';
+        ctx.fillRect(-s * 0.3, -1, s * 0.6, 2);
+        ctx.restore();
+      }
+      // central eye
+      ctx.fillStyle = '#fff';
+      ctx.beginPath(); ctx.arc(0, 0, s * 0.12, 0, Math.PI * 2); ctx.fill();
+      break;
+    }
+  }
+  ctx.restore();
+}
+
+function drawPets() {
+  for (const p of pets) {
+    drawPet(p.id, p.x, p.y, 28, p.heading || 0);
+  }
+}
+
+function buyPet(id) {
+  const def = PETS[id];
+  if (!def) return;
+  if (ownedPets.has(id)) return;
+  if (player.money < def.cost) return;
+  player.money -= def.cost;
+  ownedPets.add(id);
+  pets.push({ id, x: player.x + 30, y: player.y + 30, vx: 0, vy: 0, lastAttack: 0, heading: 0, orbitAng: Math.random() * Math.PI * 2 });
+  floaters.push({ x: player.x, y: player.y - 22, text: `${def.name} joined you`, life: 2.0, color: def.color });
+  SFX.crate();
+}
+
 function updateHealFields(dt) {
   for (let i = healFields.length - 1; i >= 0; i--) {
     const f = healFields[i];
@@ -4484,6 +4759,8 @@ function hardReset() {
   healFields.length = 0;
   decals.length = 0;
   storage.length = 0;
+  pets.length = 0;
+  ownedPets.clear();
   shopTab = 'upgrades';
   shakeAmt = 0; flashRed = 0; nearbyGun = null;
   player.weapon = 'pistol';
@@ -5278,6 +5555,9 @@ function render() {
     // type-specific icon on top
     drawPickupIcon(p.type, p.x, cy, 9);
   }
+
+  // pets (drawn under the player so the player silhouette stays primary)
+  drawPets();
 
   // player
   if (player.invuln > 0 && Math.floor(player.invuln * 12) % 2 === 0) {
@@ -7407,10 +7687,231 @@ function wrapText(text, x, y, maxWidth, lineHeight) {
   if (line) ctx.fillText(line, x, cy);
 }
 
+// ---- Shop / Storage icon renderers ----
+// Reuses the in-game drawGun() for primaries (which already has a unique
+// silhouette per weapon) — just sets up a translate so the gun is centered in
+// the icon cell rather than extending off the right of the player hand.
+function drawShopWeaponIcon(weapon, cx, cy, size) {
+  const r = size * 0.4;
+  ctx.save();
+  ctx.translate(cx - r * 0.75, cy);
+  drawGun(weapon, r);
+  ctx.restore();
+}
+
+// Hand-drawn tiny icon per secondary. Each branch is intentionally a few
+// rects/arcs — just enough to be visually distinct from the other secondaries.
+// `size` is the diameter of the cell; shapes are drawn relative to a 0,0 center.
+function drawShopSecondaryIcon(id, cx, cy, size) {
+  const def = SECONDARIES[id] || {};
+  const color = def.color || '#fff';
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.strokeStyle = '#15151a';
+  ctx.lineWidth = 1;
+  const s = size * 0.5; // half-extent the icon should fit inside
+  switch (id) {
+    case 'katana': {
+      // long thin blade with cross-guard + dark grip behind
+      ctx.fillStyle = '#5a3a1f';
+      ctx.fillRect(-s, -1.5, s * 0.45, 3); // grip
+      ctx.fillStyle = '#222';
+      ctx.fillRect(-s * 0.55, -3, 3, 6);   // guard
+      ctx.fillStyle = color;
+      ctx.fillRect(-s * 0.5, -1, s * 1.4, 2); // blade
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(s * 0.85, -1, 4, 2);    // tip highlight
+      break;
+    }
+    case 'warhammer': {
+      ctx.fillStyle = '#5a3a1f';
+      ctx.fillRect(-s * 0.4, -1.5, s * 1.1, 3); // handle
+      ctx.fillStyle = color;                     // boxy head
+      ctx.fillRect(-s, -s * 0.5, s * 0.55, s);
+      ctx.strokeRect(-s, -s * 0.5, s * 0.55, s);
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(-s + 2, -s * 0.5 + 2, s * 0.55 - 4, 2);
+      break;
+    }
+    case 'kunai': {
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.moveTo(s, 0); ctx.lineTo(-s * 0.3, -s * 0.4);
+      ctx.lineTo(-s * 0.3, s * 0.4); ctx.closePath();
+      ctx.fill(); ctx.stroke();
+      ctx.strokeStyle = '#888';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.arc(-s * 0.7, 0, s * 0.25, 0, Math.PI * 2); ctx.stroke();
+      break;
+    }
+    case 'chakram': {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(0, 0, s * 0.85, 0, Math.PI * 2); ctx.stroke();
+      // serrated teeth
+      ctx.fillStyle = color;
+      for (let i = 0; i < 6; i++) {
+        const a = (i / 6) * Math.PI * 2;
+        ctx.beginPath();
+        ctx.arc(Math.cos(a) * s * 0.85, Math.sin(a) * s * 0.85, 1.6, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      break;
+    }
+    case 'medkit': {
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(-s * 0.75, -s * 0.6, s * 1.5, s * 1.2);
+      ctx.strokeRect(-s * 0.75, -s * 0.6, s * 1.5, s * 1.2);
+      ctx.fillStyle = color;
+      ctx.fillRect(-1.5, -s * 0.4, 3, s * 0.8);
+      ctx.fillRect(-s * 0.45, -1.5, s * 0.9, 3);
+      break;
+    }
+    case 'decoy': {
+      ctx.fillStyle = color;
+      ctx.beginPath(); ctx.arc(0, -s * 0.45, s * 0.3, 0, Math.PI * 2); ctx.fill();
+      ctx.fillRect(-s * 0.35, -s * 0.15, s * 0.7, s * 0.8);
+      ctx.strokeRect(-s * 0.35, -s * 0.15, s * 0.7, s * 0.8);
+      // antennae
+      ctx.strokeStyle = '#222';
+      ctx.beginPath(); ctx.moveTo(-s * 0.2, -s * 0.7); ctx.lineTo(-s * 0.4, -s); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(s * 0.2, -s * 0.7); ctx.lineTo(s * 0.4, -s); ctx.stroke();
+      break;
+    }
+    case 'emp': {
+      // lightning bolt zig-zag
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.moveTo(s * 0.3, -s);
+      ctx.lineTo(-s * 0.3, 0);
+      ctx.lineTo(s * 0.0, 0);
+      ctx.lineTo(-s * 0.3, s);
+      ctx.lineTo(s * 0.5, -s * 0.2);
+      ctx.lineTo(s * 0.1, -s * 0.2);
+      ctx.closePath();
+      ctx.fill(); ctx.stroke();
+      break;
+    }
+    case 'bomb': {
+      ctx.fillStyle = '#222';
+      ctx.beginPath(); ctx.arc(0, s * 0.1, s * 0.7, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      // fuse
+      ctx.strokeStyle = '#a06a2a';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(s * 0.3, -s * 0.5); ctx.lineTo(s * 0.55, -s * 0.95); ctx.stroke();
+      // spark
+      ctx.fillStyle = color;
+      ctx.beginPath(); ctx.arc(s * 0.55, -s * 0.95, 2, 0, Math.PI * 2); ctx.fill();
+      break;
+    }
+    case 'healingField': {
+      ctx.fillStyle = 'rgba(92, 216, 107, 0.25)';
+      ctx.beginPath(); ctx.arc(0, 0, s * 0.85, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.arc(0, 0, s * 0.85, 0, Math.PI * 2); ctx.stroke();
+      ctx.fillStyle = color;
+      ctx.fillRect(-2, -s * 0.5, 4, s);
+      ctx.fillRect(-s * 0.5, -2, s, 4);
+      break;
+    }
+    case 'slowtime': {
+      // hourglass
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(-s * 0.6, -s * 0.7); ctx.lineTo(s * 0.6, -s * 0.7);
+      ctx.lineTo(-s * 0.6, s * 0.7); ctx.lineTo(s * 0.6, s * 0.7); ctx.closePath();
+      ctx.stroke();
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.moveTo(-s * 0.4, -s * 0.5); ctx.lineTo(s * 0.4, -s * 0.5);
+      ctx.lineTo(0, 0); ctx.closePath(); ctx.fill();
+      break;
+    }
+    case 'chickenTome':
+    case 'batTome':
+    case 'wolfTome':
+    case 'spiderTome':
+    case 'spiritTome': {
+      // book base — same shape for every tome, just recolor
+      ctx.fillStyle = color;
+      ctx.fillRect(-s * 0.7, -s * 0.85, s * 1.4, s * 1.7);
+      ctx.strokeRect(-s * 0.7, -s * 0.85, s * 1.4, s * 1.7);
+      // spine highlight
+      ctx.fillStyle = 'rgba(0,0,0,0.35)';
+      ctx.fillRect(-s * 0.7, -s * 0.85, 3, s * 1.7);
+      // creature glyph in the center
+      ctx.fillStyle = '#fff';
+      if (id === 'chickenTome') {
+        ctx.beginPath(); ctx.arc(0, -s * 0.05, s * 0.25, 0, Math.PI * 2); ctx.fill(); // head
+        ctx.fillStyle = '#ff9d3a';
+        ctx.beginPath();
+        ctx.moveTo(s * 0.18, -s * 0.05); ctx.lineTo(s * 0.4, 0); ctx.lineTo(s * 0.18, s * 0.07);
+        ctx.closePath(); ctx.fill(); // beak
+      } else if (id === 'batTome') {
+        // wings
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.lineTo(-s * 0.5, -s * 0.2);
+        ctx.lineTo(-s * 0.25, s * 0.15);
+        ctx.lineTo(0, 0);
+        ctx.lineTo(s * 0.25, s * 0.15);
+        ctx.lineTo(s * 0.5, -s * 0.2);
+        ctx.closePath(); ctx.fill();
+      } else if (id === 'wolfTome') {
+        // paw print
+        ctx.beginPath(); ctx.arc(0, s * 0.1, s * 0.22, 0, Math.PI * 2); ctx.fill();
+        for (let i = 0; i < 4; i++) {
+          const ax = -s * 0.3 + i * s * 0.2;
+          ctx.beginPath(); ctx.arc(ax, -s * 0.2, s * 0.08, 0, Math.PI * 2); ctx.fill();
+        }
+      } else if (id === 'spiderTome') {
+        ctx.beginPath(); ctx.arc(0, 0, s * 0.18, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 1;
+        for (let i = 0; i < 4; i++) {
+          const a = (i / 4) * Math.PI * 2 + 0.4;
+          ctx.beginPath();
+          ctx.moveTo(0, 0);
+          ctx.lineTo(Math.cos(a) * s * 0.4, Math.sin(a) * s * 0.4);
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.moveTo(0, 0);
+          ctx.lineTo(Math.cos(a + Math.PI) * s * 0.4, Math.sin(a + Math.PI) * s * 0.4);
+          ctx.stroke();
+        }
+      } else if (id === 'spiritTome') {
+        // ghost — bell with two dots
+        ctx.beginPath();
+        ctx.arc(0, 0, s * 0.25, Math.PI, Math.PI * 2);
+        ctx.lineTo(s * 0.25, s * 0.25);
+        ctx.lineTo(s * 0.1, s * 0.15);
+        ctx.lineTo(-s * 0.1, s * 0.25);
+        ctx.lineTo(-s * 0.25, s * 0.15);
+        ctx.closePath(); ctx.fill();
+      }
+      break;
+    }
+    default: {
+      // fallback — tag letter
+      ctx.fillStyle = color;
+      ctx.font = 'bold 14px system-ui';
+      ctx.textAlign = 'center';
+      ctx.fillText(def.tag || '?', 0, 5);
+      break;
+    }
+  }
+  ctx.restore();
+}
+
 function drawShop() {
   const w = 360, h = 540;
   const x = 18, y = H - h - 18;
-  const accent = shopTab === 'arsenal' ? '#d63030' : shopTab === 'storage' ? '#ffd166' : '#5a87c4';
+  const accent = shopTab === 'arsenal' ? '#d63030'
+              : shopTab === 'storage' ? '#ffd166'
+              : shopTab === 'pets'    ? '#80ffe0'
+              : '#5a87c4';
   ctx.fillStyle = 'rgba(8, 10, 16, 0.94)';
   ctx.fillRect(x, y, w, h);
   ctx.strokeStyle = accent;
@@ -7428,6 +7929,7 @@ function drawShop() {
   const tabs = [
     { id: 'upgrades', label: 'Upgrades', color: '#5a87c4' },
     { id: 'arsenal',  label: 'Arsenal',  color: '#d63030' },
+    { id: 'pets',     label: 'Pets',     color: '#80ffe0' },
     { id: 'storage',  label: `Storage${storage.length ? ' · ' + storage.length : ''}`, color: '#ffd166' },
   ];
   const tabY = y + 56;
@@ -7524,6 +8026,69 @@ function drawShop() {
     ly += 12;
     ly = drawArsenalList(bodyX, ly, bodyW, ARSENAL_SECONDARIES, 'secondary', sy, clipY, clipH);
     contentBottom = ly;
+  } else if (shopTab === 'pets') {
+    ctx.fillStyle = '#9aa0ab';
+    ctx.font = '10px system-ui';
+    ctx.fillText('one of each · immortal · joins you for the run', bodyX, bodyY);
+    const rowH = 60;
+    let ly = bodyY + 16;
+    for (const id of PET_KEYS) {
+      const def = PETS[id];
+      const owned = ownedPets.has(id);
+      const can = !owned && player.money >= def.cost;
+      const rowRect = { x: bodyX, y: ly, w: bodyW, h: rowH };
+      const screenY = ly - sy;
+      const visible = screenY + rowH > clipY && screenY < clipY + clipH;
+      const hover = can && visible && pointInRect(mouse, { x: bodyX, y: screenY, w: bodyW, h: rowH });
+      ctx.fillStyle = hover ? 'rgba(128, 255, 224, 0.10)' : 'rgba(20, 22, 30, 0.5)';
+      ctx.fillRect(rowRect.x, rowRect.y, rowRect.w, rowRect.h);
+      // teal left stripe
+      ctx.fillStyle = '#80ffe0';
+      ctx.fillRect(rowRect.x, rowRect.y, 2, rowRect.h);
+      // Portrait cell with the pet drawn at idle facing
+      const portraitW = 54;
+      ctx.fillStyle = '#0d0f16';
+      ctx.fillRect(rowRect.x + 4, rowRect.y + 4, portraitW, rowH - 8);
+      ctx.strokeStyle = def.color;
+      ctx.lineWidth = 1;
+      ctx.strokeRect(rowRect.x + 4.5, rowRect.y + 4.5, portraitW - 1, rowH - 9);
+      drawPet(id, rowRect.x + 4 + portraitW / 2, rowRect.y + rowH / 2, 36, 0);
+      // Name + desc
+      const textX = rowRect.x + portraitW + 12;
+      const textW = bodyW - portraitW - 80;
+      ctx.fillStyle = owned ? '#666' : can ? '#fff' : '#5a5d66';
+      fitFont(def.name, textW, 'bold 14px system-ui', 11);
+      ctx.textAlign = 'left';
+      ctx.fillText(def.name, textX, rowRect.y + 22);
+      ctx.fillStyle = '#888c95';
+      fitFont(def.desc, textW, '11px system-ui', 8);
+      ctx.fillText(def.desc, textX, rowRect.y + 40);
+      // kind/stat line
+      ctx.fillStyle = def.color;
+      ctx.font = 'bold 9px system-ui';
+      const tag = def.kind === 'orbit' ? 'ORBITAL · AUTO-FIRE'
+                : def.kind === 'ranged' ? 'RANGED'
+                : 'MELEE';
+      ctx.fillText(tag, textX, rowRect.y + 53);
+      // Price / OWNED tag
+      ctx.textAlign = 'right';
+      if (owned) {
+        ctx.fillStyle = '#8be08b';
+        ctx.font = 'bold 11px system-ui';
+        ctx.fillText('OWNED', rowRect.x + bodyW - 6, rowRect.y + 34);
+      } else {
+        ctx.fillStyle = can ? '#ffce44' : '#666';
+        ctx.font = 'bold 14px system-ui';
+        ctx.fillText(`$${def.cost}`, rowRect.x + bodyW - 6, rowRect.y + 34);
+      }
+      ctx.textAlign = 'left';
+      if (can) {
+        const petId = id;
+        shopBuyRects.push({ rect: rowRect, action: () => buyPet(petId) });
+      }
+      ly += rowH + 6;
+    }
+    contentBottom = ly;
   } else if (shopTab === 'storage') {
     ctx.fillStyle = '#9aa0ab';
     ctx.font = '10px system-ui';
@@ -7549,12 +8114,14 @@ function drawShop() {
         ctx.strokeStyle = item.color;
         ctx.lineWidth = hover ? 2 : 1;
         ctx.strokeRect(rect.x + 0.5, rect.y + 0.5, rect.w - 1, rect.h - 1);
-        ctx.fillStyle = item.color;
-        ctx.font = 'bold 22px system-ui';
-        ctx.textAlign = 'center';
-        ctx.fillText(item.tag, rect.x + rect.w / 2, rect.y + 32);
+        // Unique mini-model for the item
+        const icx = rect.x + rect.w / 2;
+        const icy = rect.y + 26;
+        if (item.kind === 'weapon') drawShopWeaponIcon(item.id, icx, icy, 32);
+        else                        drawShopSecondaryIcon(item.id, icx, icy, 32);
         ctx.fillStyle = '#dfe2e8';
         fitFont(item.name, rect.w - 4, 'bold 9px system-ui', 7);
+        ctx.textAlign = 'center';
         ctx.fillText(item.name, rect.x + rect.w / 2, rect.y + 48);
         ctx.fillStyle = item.kind === 'weapon' ? '#7ec8ff' : '#c47eff';
         ctx.font = 'bold 7px system-ui';
@@ -7602,7 +8169,8 @@ function drawShop() {
 }
 
 function drawArsenalList(x, y, w, entries, kind, sy, clipY, clipH) {
-  const rowH = 30;
+  const rowH = 44;
+  const iconCol = 40; // pixels reserved on the left for the unique-model icon
   let ly = y;
   for (const entry of entries) {
     const def = kind === 'weapon' ? WEAPONS[entry.id] : SECONDARIES[entry.id];
@@ -7610,39 +8178,50 @@ function drawArsenalList(x, y, w, entries, kind, sy, clipY, clipH) {
     const equipped = kind === 'weapon' ? player.weapon === entry.id : player.secondary === entry.id;
     const can = player.money >= entry.cost && !equipped;
     const rowRect = { x, y: ly, w, h: rowH };
-    // Hover-test against screen-space cursor (translate is in effect, so we
-    // subtract sy manually) and require the row to be inside the clip region.
     const screenY = ly - sy;
     const visible = screenY + rowH > clipY && screenY < clipY + clipH;
     const hover = can && visible && pointInRect(mouse, { x, y: screenY, w, h: rowH });
-    if (hover) {
-      ctx.fillStyle = 'rgba(214, 48, 48, 0.14)';
-      ctx.fillRect(rowRect.x, rowRect.y, rowRect.w, rowRect.h);
-    }
+    // Background — subtle hover wash, faint cell tint otherwise
+    ctx.fillStyle = hover ? 'rgba(214, 48, 48, 0.14)' : 'rgba(20, 22, 30, 0.5)';
+    ctx.fillRect(rowRect.x, rowRect.y, rowRect.w, rowRect.h);
+    // Red left accent stripe
     ctx.fillStyle = '#d63030';
     ctx.fillRect(rowRect.x, rowRect.y, 2, rowRect.h);
-    ctx.fillStyle = def.color;
-    ctx.font = 'bold 14px system-ui';
-    ctx.textAlign = 'center';
-    ctx.fillText(def.tag || '?', rowRect.x + 18, rowRect.y + 20);
-    ctx.textAlign = 'left';
+    // Icon cell — dark backdrop + unique weapon/secondary model
+    const iconX = rowRect.x + 4;
+    const iconY = rowRect.y + 2;
+    ctx.fillStyle = '#0d0f16';
+    ctx.fillRect(iconX, iconY, iconCol - 6, rowH - 4);
+    ctx.strokeStyle = def.color;
+    ctx.lineWidth = 1;
+    ctx.strokeRect(iconX + 0.5, iconY + 0.5, iconCol - 7, rowH - 5);
+    const cx = iconX + (iconCol - 6) / 2;
+    const cy = iconY + (rowH - 4) / 2;
+    if (kind === 'weapon') drawShopWeaponIcon(entry.id, cx, cy, rowH - 12);
+    else                   drawShopSecondaryIcon(entry.id, cx, cy, rowH - 12);
+    // Name + description column
+    const textX = rowRect.x + iconCol + 4;
+    const textRight = rowRect.x + w - 70;
+    const textW = textRight - textX;
     ctx.fillStyle = equipped ? '#666' : can ? '#fff' : '#5a5d66';
-    fitFont(def.name, w - 110, 'bold 12px system-ui', 9);
-    ctx.fillText(def.name, rowRect.x + 34, rowRect.y + 14);
+    fitFont(def.name, textW, 'bold 13px system-ui', 10);
+    ctx.textAlign = 'left';
+    ctx.fillText(def.name, textX, rowRect.y + 19);
     if (def.desc) {
       ctx.fillStyle = '#888c95';
-      fitFont(def.desc, w - 110, '9px system-ui', 7);
-      ctx.fillText(def.desc, rowRect.x + 34, rowRect.y + 25);
+      fitFont(def.desc, textW, '10px system-ui', 8);
+      ctx.fillText(def.desc, textX, rowRect.y + 33);
     }
+    // Price column
     ctx.textAlign = 'right';
     if (equipped) {
       ctx.fillStyle = '#8be08b';
       ctx.font = 'bold 10px system-ui';
-      ctx.fillText('EQUIPPED', rowRect.x + w - 4, rowRect.y + 19);
+      ctx.fillText('EQUIPPED', rowRect.x + w - 4, rowRect.y + 26);
     } else {
       ctx.fillStyle = can ? '#ffce44' : '#666';
       ctx.font = 'bold 13px system-ui';
-      ctx.fillText(`$${entry.cost}`, rowRect.x + w - 4, rowRect.y + 19);
+      ctx.fillText(`$${entry.cost}`, rowRect.x + w - 4, rowRect.y + 26);
     }
     ctx.textAlign = 'left';
     if (can) {
@@ -7689,6 +8268,7 @@ function tick() {
     updateBuildings(dt);
     updateBladeCrates(dt);
     updateSummons(dt);
+    updatePets(dt);
     updateHealFields(dt);
     updateAbilityBooks(dt);
     updateParticles(dt);
