@@ -5583,9 +5583,18 @@ function updateBullets(dt) {
       let da = tgtA - curA;
       while (da >  Math.PI) da -= Math.PI*2;
       while (da < -Math.PI) da += Math.PI*2;
-      // Looser turn outbound so the chakram orbits around the cursor rather
-      // than snapping to it; tighter on return so it always catches up.
-      const turnRate = b.returning ? 9 : 6;
+      // Outbound: turn rate ramps up over the outgoing phase. Starts very
+      // loose (the chakram behaves like a thrown projectile that barely
+      // steers) and grows tight (it snaps onto the cursor) as the outTime
+      // progresses. Return phase stays a fixed tight turn so it always
+      // catches up to the player.
+      let turnRate;
+      if (b.returning) {
+        turnRate = 9;
+      } else {
+        const phase = Math.max(0, Math.min(1, b.chakramTimer / b.outTime));
+        turnRate = 2 + phase * 12; // 2 rad/s → 14 rad/s across the outgoing phase
+      }
       const turn = Math.sign(da) * Math.min(Math.abs(da), turnRate * dt);
       const newA = curA + turn;
       const sp = Math.hypot(b.vx, b.vy);
