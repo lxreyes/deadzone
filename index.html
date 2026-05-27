@@ -48,83 +48,150 @@ function ensureAudio() {
   } catch (e) { /* environment lacks Web Audio; sfx becomes a no-op */ }
 }
 
-// ----- Background music (procedural ambient drones, two layers crossfaded) -----
+// ----- Background music (procedural, note-based loops, two crossfaded layers) -----
+//
+// Each layer is a routing gain node. updateMusicForState fades between them.
+// scheduleSong walks a song's tracks and pre-schedules a full loop's worth of
+// note events on the audio clock; a setTimeout re-schedules the next loop just
+// before the current one ends. Stops naturally when musicCurrentSong changes.
 let musicMaster = null;
-let musicMenuGain = null;   // calm pads layer
-let musicCombatGain = null; // tense pulsing layer
+let musicMenuGain = null;   // routing node for the calm-loop notes
+let musicCombatGain = null; // routing node for the combat-loop notes
+let musicMenuLayer = null;  // filtered node the menu notes connect into
+let musicCombatLayer = null;
 let musicTargetState = null;
+let musicCurrentSong = null;
+let musicLoopTimer = null;
+
+// Note name → frequency lookup for the few octaves we use.
+const NOTE_FREQ = {
+  'E1': 41.20, 'F1': 43.65, 'G1': 49.00, 'A1': 55.00, 'B1': 61.74,
+  'C2': 65.41, 'D2': 73.42, 'E2': 82.41, 'F2': 87.31, 'G2': 98.00, 'A2': 110.00,
+  'B2': 123.47, 'C3': 130.81, 'D3': 146.83, 'E3': 164.81, 'F3': 174.61, 'G3': 196.00, 'A3': 220.00,
+  'B3': 246.94, 'C4': 261.63, 'D4': 293.66, 'E4': 329.63, 'F4': 349.23, 'G4': 392.00, 'A4': 440.00,
+  'B4': 493.88, 'C5': 523.25, 'D5': 587.33, 'E5': 659.25, 'F5': 698.46, 'G5': 783.99, 'A5': 880.00,
+};
+
+// Songs. Each track lists [beatOffset, noteName, durationInBeats] entries.
+const SONG_MENU = {
+  bpm: 60, bars: 8, beatsPerBar: 4, layer: 'menu',
+  tracks: [
+    // sparse sine lead (A minor pentatonic)
+    { type: 'sine', vol: 0.55, notes: [
+      [0, 'A3', 2], [2, 'C4', 2],
+      [4, 'E4', 3], [7, 'D4', 1],
+      [8, 'C4', 2], [10, 'A3', 2],
+      // rest — bars 4 only sustained chord pad
+      [16, 'E4', 2], [18, 'G4', 2],
+      [20, 'E4', 4],
+      [24, 'D4', 2], [26, 'C4', 2],
+      [28, 'A3', 4],
+    ]},
+    // warm triangle pad — slow chord under everything
+    { type: 'triangle', vol: 0.28, notes: [
+      [0,  'A2', 8],
+      [8,  'F2', 8],
+      [16, 'G2', 8],
+      [24, 'A2', 8],
+    ]},
+  ],
+};
+
+const SONG_COMBAT = {
+  bpm: 120, bars: 8, beatsPerBar: 4, layer: 'combat',
+  tracks: [
+    // driving sawtooth bass — A minor → G → F → E descending progression
+    { type: 'sawtooth', vol: 0.30, notes: [
+      [0,'A1',0.5],[0.5,'A1',0.5],[1,'A1',0.5],[1.5,'E2',0.5],
+      [2,'A1',0.5],[2.5,'A1',0.5],[3,'A1',0.5],[3.5,'C2',0.5],
+      [4,'G1',0.5],[4.5,'G1',0.5],[5,'G1',0.5],[5.5,'D2',0.5],
+      [6,'G1',0.5],[6.5,'G1',0.5],[7,'G1',0.5],[7.5,'B1',0.5],
+      [8,'F1',0.5],[8.5,'F1',0.5],[9,'F1',0.5],[9.5,'C2',0.5],
+      [10,'F1',0.5],[10.5,'F1',0.5],[11,'F1',0.5],[11.5,'A1',0.5],
+      [12,'E1',0.5],[12.5,'E1',0.5],[13,'E1',0.5],[13.5,'B1',0.5],
+      [14,'E1',0.5],[14.5,'E1',0.5],[15,'E1',0.5],[15.5,'G1',0.5],
+      // second 4 bars — same progression with sparser hits to breathe
+      [16,'A1',1],[17,'A1',1],[18,'E2',1],[19,'A1',1],
+      [20,'G1',1],[21,'G1',1],[22,'D2',1],[23,'G1',1],
+      [24,'F1',1],[25,'F1',1],[26,'C2',1],[27,'F1',1],
+      [28,'E1',1],[29,'E1',1],[30,'B1',1],[31,'E1',1],
+    ]},
+    // brighter square lead — short riffs on bars 2/4/6/8 only
+    { type: 'square', vol: 0.13, notes: [
+      [4, 'A4', 0.5], [4.5, 'C5', 0.5], [5, 'E5', 1], [6, 'D5', 0.5], [6.5, 'C5', 0.5], [7, 'A4', 1],
+      [12,'A4', 0.5], [12.5,'C5', 0.5], [13,'E5', 1], [14,'D5', 0.5], [14.5,'B4', 0.5], [15,'G4', 1],
+      [20,'A4', 0.5], [20.5,'C5', 0.5], [21,'F5', 1], [22,'E5', 0.5], [22.5,'C5', 0.5], [23,'A4', 1],
+      [28,'A4', 1],   [29,'B4', 1],     [30,'C5', 2],
+    ]},
+  ],
+};
 
 function ensureMusic() {
   if (musicMaster || !audioCtx) return;
-  // Master controls overall music level (still well below SFX so they punch through)
   musicMaster = audioCtx.createGain();
-  musicMaster.gain.value = soundMuted ? 0 : 0.45;
+  musicMaster.gain.value = soundMuted ? 0 : 0.5;
   musicMaster.connect(audioCtx.destination);
 
-  const startAt = audioCtx.currentTime + 0.05;
-
-  // CALM PADS — a soft minor chord with slow LFO detune. Used outside gameplay.
+  // Menu layer: warm lowpass
   musicMenuGain = audioCtx.createGain();
-  musicMenuGain.gain.setValueAtTime(0, audioCtx.currentTime);
+  musicMenuGain.gain.value = 0;
+  musicMenuGain.connect(musicMaster);
   const menuLP = audioCtx.createBiquadFilter();
   menuLP.type = 'lowpass';
-  menuLP.frequency.value = 1600;
+  menuLP.frequency.value = 2200;
   menuLP.connect(musicMenuGain);
-  musicMenuGain.connect(musicMaster);
-  for (const freq of [110, 164.81, 220, 329.63]) { // A2, E3, A3, E4 — open + airy
-    const osc = audioCtx.createOscillator();
-    osc.type = 'sine';
-    osc.frequency.value = freq;
-    const lfo = audioCtx.createOscillator();
-    lfo.type = 'sine';
-    lfo.frequency.value = 0.08 + Math.random() * 0.14;
-    const lfoAmt = audioCtx.createGain();
-    lfoAmt.gain.value = 2.5;
-    lfo.connect(lfoAmt);
-    lfoAmt.connect(osc.frequency);
-    const oscGain = audioCtx.createGain();
-    oscGain.gain.value = 0.42;
-    osc.connect(oscGain);
-    oscGain.connect(menuLP);
-    osc.start(startAt);
-    lfo.start(startAt);
-  }
+  musicMenuLayer = menuLP;
 
-  // COMBAT — low sawtooth drone + a heartbeat-pulse sub bass. Used while playing.
+  // Combat layer: more aggressive lowpass to keep the saw bass tight
   musicCombatGain = audioCtx.createGain();
-  musicCombatGain.gain.setValueAtTime(0, audioCtx.currentTime);
+  musicCombatGain.gain.value = 0;
+  musicCombatGain.connect(musicMaster);
   const combatLP = audioCtx.createBiquadFilter();
   combatLP.type = 'lowpass';
-  combatLP.frequency.value = 620;
+  combatLP.frequency.value = 1600;
   combatLP.connect(musicCombatGain);
-  musicCombatGain.connect(musicMaster);
-  for (const freq of [55, 82.5, 110, 138.59]) { // A1, E2, A2, C#3
-    const osc = audioCtx.createOscillator();
-    osc.type = 'sawtooth';
-    osc.frequency.value = freq;
-    const oscGain = audioCtx.createGain();
-    oscGain.gain.value = 0.30;
-    osc.connect(oscGain);
-    oscGain.connect(combatLP);
-    osc.start(startAt);
+  musicCombatLayer = combatLP;
+}
+
+// Schedule a single note: attack-decay envelope on a fresh oscillator.
+function playMusicNote(freq, startTime, duration, type, vol, dest) {
+  if (!audioCtx || !dest) return;
+  const osc = audioCtx.createOscillator();
+  osc.type = type;
+  osc.frequency.value = freq;
+  const env = audioCtx.createGain();
+  env.gain.setValueAtTime(0, startTime);
+  env.gain.linearRampToValueAtTime(vol, startTime + 0.02);
+  // sustain for most of the duration, then short tail
+  env.gain.setValueAtTime(vol, startTime + duration * 0.7);
+  env.gain.exponentialRampToValueAtTime(0.001, startTime + duration);
+  osc.connect(env);
+  env.connect(dest);
+  osc.start(startTime);
+  osc.stop(startTime + duration + 0.05);
+}
+
+// Pre-schedule one full loop of a song; setTimeout queues the next loop just
+// before this one ends. Re-arming stops automatically when musicCurrentSong
+// changes (i.e., a different song was set).
+function scheduleSong(song) {
+  if (!audioCtx || !musicMenuLayer) return;
+  if (musicLoopTimer) { clearTimeout(musicLoopTimer); musicLoopTimer = null; }
+  musicCurrentSong = song;
+  const beat = 60 / song.bpm;
+  const loopDur = song.bars * song.beatsPerBar * beat;
+  const dest = song.layer === 'menu' ? musicMenuLayer : musicCombatLayer;
+  const startTime = audioCtx.currentTime + 0.08;
+  for (const track of song.tracks) {
+    for (const [beatOffset, name, durBeats] of track.notes) {
+      const f = NOTE_FREQ[name];
+      if (!f) continue;
+      playMusicNote(f, startTime + beatOffset * beat, durBeats * beat, track.type, track.vol, dest);
+    }
   }
-  // pulsing heartbeat — square wave LFO on a sub-bass gain
-  const heart = audioCtx.createOscillator();
-  heart.type = 'sine';
-  heart.frequency.value = 41.2; // E1
-  const heartGain = audioCtx.createGain();
-  heartGain.gain.value = 0.25;
-  const pulse = audioCtx.createOscillator();
-  pulse.type = 'square';
-  pulse.frequency.value = 1.2; // ~72 BPM
-  const pulseAmt = audioCtx.createGain();
-  pulseAmt.gain.value = 0.25;
-  pulse.connect(pulseAmt);
-  pulseAmt.connect(heartGain.gain);
-  heart.connect(heartGain);
-  heartGain.connect(combatLP);
-  heart.start(startAt);
-  pulse.start(startAt);
+  musicLoopTimer = setTimeout(() => {
+    if (musicCurrentSong === song) scheduleSong(song);
+  }, Math.max(50, (loopDur - 0.05) * 1000));
 }
 
 // Crossfade between calm/combat layers based on the active game state.
@@ -135,17 +202,16 @@ function updateMusicForState() {
   const firstCall = musicTargetState === null;
   musicTargetState = inCombat;
   const t = audioCtx.currentTime;
-  // Snap in on the first transition so the player hears something immediately;
-  // every subsequent transition uses a smooth crossfade.
   const fade = firstCall ? 0.6 : 2.2;
-  // Defensive: cancel any in-flight ramps and pin current values so the next
-  // ramp has a defined starting point (linearRamp requires this).
   for (const g of [musicMenuGain, musicCombatGain]) {
     g.gain.cancelScheduledValues(t);
     g.gain.setValueAtTime(g.gain.value, t);
   }
   musicMenuGain.gain.linearRampToValueAtTime(inCombat ? 0 : 1, t + fade);
   musicCombatGain.gain.linearRampToValueAtTime(inCombat ? 1 : 0, t + fade);
+  // Switch which song is being scheduled. The crossfade on the layer gains
+  // hides the swap — both songs always schedule into their own layer.
+  scheduleSong(inCombat ? SONG_COMBAT : SONG_MENU);
 }
 function resumeAudio() {
   if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
@@ -160,7 +226,7 @@ function applyMusicMute() {
   const t = audioCtx.currentTime;
   musicMaster.gain.cancelScheduledValues(t);
   musicMaster.gain.setValueAtTime(musicMaster.gain.value, t);
-  musicMaster.gain.linearRampToValueAtTime(soundMuted ? 0 : 0.45, t + 0.4);
+  musicMaster.gain.linearRampToValueAtTime(soundMuted ? 0 : 0.5, t + 0.4);
 }
 // Quick tone with linear attack + exponential decay; optional pitch sweep.
 function tone({ freq = 440, type = 'square', dur = 0.1, vol = 0.3, sweep = 0, delay = 0, attack = 0.005 } = {}) {
