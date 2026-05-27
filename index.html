@@ -1470,6 +1470,7 @@ const cheatSections = [
     { label: 'God Mode', toggle: () => godMode, run() { godMode = !godMode; } },
     { label: () => recentErrors.length > 0 ? `Clear Errors (${recentErrors.length})` : 'Clear Errors',
       run() { recentErrors.length = 0; } },
+    { label: 'Copy Errors', run() { copyErrors(); } },
   ]},
   { id: 'waves', name: 'Waves & Bosses', open: false, items: [
     { label: '+5 Waves', run() {
@@ -11180,6 +11181,55 @@ function tick() {
   // which game state we're in (menu, paused, playing, tutorial).
   drawErrorOverlay();
   requestAnimationFrame(tick);
+}
+
+// Open an HTML overlay with the in-game error log in a selectable textarea
+// so the player can manually highlight + copy with the mouse. Also has a
+// "Copy to Clipboard" button that attempts the modern API — but unlike a
+// pure clipboard call, the textarea is always visible so copy still works
+// even on file:// URLs where the Clipboard API is often blocked.
+function copyErrors() {
+  if (recentErrors.length === 0) {
+    floaters.push({ x: W/2, y: 80, text: 'No errors to copy', life: 1.6, color: '#9aa0ab' });
+    return;
+  }
+  const text = recentErrors.map(e =>
+    `${e.tag}${e.count > 1 ? ' ×' + e.count : ''}\n${e.msg}`
+  ).join('\n\n---\n\n');
+  let overlay = document.getElementById('dz-err-overlay');
+  if (overlay) overlay.remove();
+  overlay = document.createElement('div');
+  overlay.id = 'dz-err-overlay';
+  overlay.style.cssText =
+    'position:fixed; top:50%; left:50%; transform:translate(-50%,-50%);' +
+    'width:720px; max-width:92vw; max-height:80vh;' +
+    'background:#1a1d28; border:2px solid #ff5050; border-radius:6px;' +
+    'padding:14px; z-index:9999; box-shadow:0 16px 50px rgba(0,0,0,0.7);' +
+    'display:flex; flex-direction:column; gap:10px;' +
+    'font-family:system-ui, -apple-system, sans-serif;';
+  overlay.innerHTML =
+    '<div style="color:#fff; font-weight:700; font-size:14px;">Errors — select the text and press <kbd style="background:#0c0e16;padding:1px 6px;border-radius:3px;">Cmd+C</kbd> / <kbd style="background:#0c0e16;padding:1px 6px;border-radius:3px;">Ctrl+C</kbd> to copy</div>' +
+    '<textarea readonly style="width:100%; height:340px; background:#0c0e16; color:#dfe2e8; border:1px solid #33363f; font-family:ui-monospace,monospace; font-size:11.5px; padding:10px; line-height:1.4; resize:vertical; box-sizing:border-box;"></textarea>' +
+    '<div style="display:flex; gap:8px;">' +
+    '<button id="dz-err-copy" style="flex:1; background:#5a87c4; color:#fff; border:0; padding:10px; font-weight:700; cursor:pointer; border-radius:4px; font-size:13px;">Copy to Clipboard</button>' +
+    '<button id="dz-err-close" style="flex:1; background:#33363f; color:#fff; border:0; padding:10px; font-weight:700; cursor:pointer; border-radius:4px; font-size:13px;">Close</button>' +
+    '</div>';
+  document.body.appendChild(overlay);
+  const ta = overlay.querySelector('textarea');
+  ta.value = text;
+  ta.focus();
+  ta.select();
+  overlay.querySelector('#dz-err-copy').onclick = () => {
+    ta.focus(); ta.select();
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch (e) {}
+    if (!ok && navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).catch(() => {});
+      ok = true;
+    }
+    floaters.push({ x: W/2, y: 80, text: ok ? 'Copied!' : 'Copy failed — select + Cmd+C manually', life: 1.8, color: ok ? '#8be08b' : '#d63030' });
+  };
+  overlay.querySelector('#dz-err-close').onclick = () => overlay.remove();
 }
 
 // In-canvas error panel — shows the most recent errors with their first
