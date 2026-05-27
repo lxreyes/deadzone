@@ -592,8 +592,43 @@ const WEAPONS = {
              bulletKind: 'bolt', desc: 'Heavy bolt; pierces 5 zombies' },
   flame:   { name: 'Flamethrower',     shots: 3, spread: 0.28, damage: 0.45, fireRate: 6.0, bulletSpeed: 0.7, pierce: 0, life: 0.35, color: '#ff8030', tag: 'f',
              bulletKind: 'flame', desc: 'Short-range stream of flame' },
+  // ---- Trader exclusives ----
+  // Marked traderOnly so they can never drop, decay into storage, or appear
+  // in Arsenal. They only enter the world via the trader's shop tab and
+  // disappear forever when the player swaps to a different weapon.
+  fish:    { name: 'Fish Slap',        shots: 7, spread: 0.40, damage: 0.55, fireRate: 0.6, bulletSpeed: 0.75, pierce: 0, life: 0.45, color: '#9bc8e8', tag: 'F', traderOnly: true,
+             desc: 'Slaps a wide cone of stinky fish' },
+  pizza:   { name: 'Pizza Cutter',     shots: 1, spread: 0.00, damage: 1.3, fireRate: 1.1, bulletSpeed: 1.1, pierce: 0, life: 2.2, color: '#e84030', tag: 'Z', traderOnly: true,
+             bulletKind: 'duck', bounces: 6, desc: 'Wheel of pizza that bounces off zombies' },
+  toaster: { name: 'Toaster Cannon',   shots: 1, spread: 0.06, damage: 1.6, fireRate: 0.75, bulletSpeed: 0.9, pierce: 0, life: 1.5, color: '#d8a060', tag: 'A', traderOnly: true,
+             explosive: true, blastR: 55, blastDmg: 18, desc: 'Pops a slice of scalding toast at the target' },
+  confetti:{ name: 'Confetti Bomb',    shots: 10, spread: 0.55, damage: 0.35, fireRate: 0.65, bulletSpeed: 1.0, pierce: 0, life: 1.0, color: '#ff80c0', tag: 'O', traderOnly: true,
+             desc: 'Sprays a rainbow burst of streamers' },
+  mower:   { name: 'Lawnmower',        shots: 3, spread: 0.30, damage: 0.5, fireRate: 7.5, bulletSpeed: 0.55, pierce: 0, life: 0.3, color: '#5cd86b', tag: 'M', traderOnly: true,
+             bulletKind: 'flame', desc: 'Mows a stream of grass shards in front of you' },
+  noodle:  { name: 'Spaghetti Launcher', shots: 1, spread: 0.0, damage: 1.0, fireRate: 0.85, bulletSpeed: 0.95, pierce: 3, life: 1.6, color: '#ffd166', tag: 'N', traderOnly: true,
+             bulletKind: 'banana', leavesSlick: true, desc: 'Piercing noodles that leave a sticky slick' },
 };
+// Trader stock — id + cost. Prices are deliberately higher than Arsenal
+// because these weapons are exclusive and the trader only visits sometimes.
+const TRADER_STOCK = [
+  { id: 'fish',     cost: 480 },
+  { id: 'pizza',    cost: 540 },
+  { id: 'toaster',  cost: 620 },
+  { id: 'confetti', cost: 500 },
+  { id: 'mower',    cost: 560 },
+  { id: 'noodle',   cost: 580 },
+];
 const DROPPABLE_WEAPONS = ['shotgun', 'smg', 'rifle', 'rocket', 'chicken', 'banana', 'duck', 'plus', 'tesla', 'orbit', 'rail', 'twin', 'crossbow', 'flame'];
+
+// Trader weapons can never end up on the ground — they disappear when swapped
+// away. Used by every gun-drop site (swap, arsenal buy, death).
+function shouldDropOldWeapon(weapon) {
+  if (!weapon || weapon === 'pistol') return false;
+  const def = WEAPONS[weapon];
+  if (def && def.traderOnly) return false;
+  return true;
+}
 
 // Secondary blades — used with right-click or Q. Each has its own attack style.
 //   katana  = melee arc swing
@@ -714,6 +749,15 @@ const healPulses = [];  // expanding green rings drawn when a healer pulses — 
 // visual side-effect can persist for a few seconds).
 let pendingEvent = null;     // { type, fireIn }
 let activeEvent = null;      // { type, timer, ... }
+// ---------- Roaming trader (visits sometimes; sells exclusive gag weapons) ----------
+// While `trader` is non-null the Shop UI grows a Trader tab and a humanoid
+// NPC stands inside the shop rect. The trader stays for a fixed number of
+// waves and then leaves; a cooldown prevents back-to-back arrivals.
+let trader = null;           // { wavesLeft } or null
+let traderCooldown = 0;      // waves remaining before another arrival can roll
+const TRADER_STAY_WAVES = 3;
+const TRADER_ARRIVAL_CHANCE = 0.30; // chance per eligible wave-end
+const TRADER_COOLDOWN_WAVES = 5;    // waves before another arrival can roll
 const decals  = []; // blood splats on the floor
 
 // Building catalog. Buildings snap to the 40px floor grid; w/h govern both
@@ -1243,6 +1287,19 @@ const cheatSections = [
     { label: () => `Lightning Storm [H]: ${player.abilities.storm ? 'UNLOCKED' : 'locked'}`,
       run() { player.abilities.storm = true; } },
     { label: 'Unlock All', run() { for (const k of ABILITY_KEYS) player.abilities[k] = true; } },
+  ]},
+  { id: 'trader', name: 'Trader', open: false, items: [
+    { label: () => trader ? `Trader: ${trader.wavesLeft}w left` : 'Summon Trader',
+      run() {
+        if (!trader) {
+          trader = { wavesLeft: TRADER_STAY_WAVES };
+          floaters.push({ x: shop.x + shop.w/2, y: shop.y - 16, text: 'Trader summoned', life: 2.0, color: '#c47eff' });
+          SFX.unlock();
+        }
+      } },
+    { label: 'Dismiss Trader', run() { trader = null; traderCooldown = 0; } },
+    { label: 'Extend +3 Waves',
+      run() { if (trader) trader.wavesLeft += 3; } },
   ]},
   { id: 'events', name: 'Arena Events', open: false, items: [
     { label: '+Supply Drop', run() { fireArenaEvent('supplyDrop'); } },
@@ -2424,9 +2481,10 @@ function buyArsenalPrimary(id) {
   if (!entry || player.money < entry.cost) return;
   if (player.weapon === id) return; // already wielding it
   player.money -= entry.cost;
-  // drop the old weapon at the player's feet (skip pistol — the infinite default)
+  // drop the old weapon at the player's feet (skip pistol — the infinite default
+  // and trader-only exclusives which can never enter the world)
   const old = player.weapon;
-  if (old !== 'pistol') dropGunAt(player.x, player.y, old, 60);
+  if (shouldDropOldWeapon(old)) dropGunAt(player.x, player.y, old, 60);
   player.weapon = id;
   const def = WEAPONS[id];
   if (def) {
@@ -2964,6 +3022,53 @@ function fireArenaEvent(type) {
   }
 }
 
+// Trader lifecycle: called from endCurrentWave so the timing aligns with the
+// intermission. Decrements the trader's remaining waves, removes them at 0,
+// then rolls a fresh arrival if eligible.
+function processTraderForWaveEnd() {
+  const cx = shop.x + shop.w / 2, cy = shop.y - 16;
+  if (trader) {
+    trader.wavesLeft -= 1;
+    if (trader.wavesLeft <= 0) {
+      trader = null;
+      traderCooldown = TRADER_COOLDOWN_WAVES;
+      floaters.push({ x: cx, y: cy, text: 'Trader has left', life: 3.0, color: '#c47eff' });
+    }
+    return;
+  }
+  // No trader currently — try to summon one.
+  if (traderCooldown > 0) {
+    traderCooldown -= 1;
+    return;
+  }
+  if (Math.random() < TRADER_ARRIVAL_CHANCE) {
+    trader = { wavesLeft: TRADER_STAY_WAVES };
+    floaters.push({ x: cx, y: cy, text: 'A Trader has arrived!', life: 3.5, color: '#c47eff' });
+    SFX.unlock();
+  }
+}
+
+function buyTraderWeapon(id) {
+  if (!trader) return; // safety — should never hit, the tab is hidden
+  const entry = TRADER_STOCK.find(t => t.id === id);
+  if (!entry || player.money < entry.cost) return;
+  if (player.weapon === id) return;
+  player.money -= entry.cost;
+  const old = player.weapon;
+  // Trader-only weapons vanish on swap (never drop). Regular weapons still
+  // drop normally so the player doesn't lose their old loadout.
+  if (shouldDropOldWeapon(old)) {
+    dropGunAt(player.x, player.y, old, 60);
+  }
+  player.weapon = id;
+  const def = WEAPONS[id];
+  if (def) {
+    showTooltip('weapon:' + id, `${def.name} acquired`, def.desc || 'Trader exclusive', def.color);
+    floaters.push({ x: player.x, y: player.y - 22, text: `Bought ${def.name}`, life: 1.6, color: def.color });
+  }
+  SFX.swap();
+}
+
 function updateArenaEvent(dt) {
   if (pendingEvent) {
     pendingEvent.fireIn -= dt;
@@ -3018,6 +3123,8 @@ function endCurrentWave() {
   }
   // every wave offers 3 random perks to pick from
   pendingCards = pickThreeUpgrades();
+  // Roll the roaming trader's state for the next intermission.
+  processTraderForWaveEnd();
 }
 
 function pickThreeUpgrades() {
@@ -4919,8 +5026,9 @@ function doSwapWeapon() {
   player.weapon = nearbyGun.weapon;
   const idx = guns.indexOf(nearbyGun);
   if (idx >= 0) guns.splice(idx, 1);
-  // drop old weapon at the player's feet (skip pistol — it's infinite ammo default)
-  if (old !== 'pistol') {
+  // drop old weapon at the player's feet (skip pistol — it's infinite ammo
+  // default — and trader-only weapons which never enter the world)
+  if (shouldDropOldWeapon(old)) {
     dropGunAt(player.x, player.y, old, 30);
   }
   for (let k = 0; k < 16; k++) {
@@ -5009,11 +5117,13 @@ function checkDeath() {
   bestKills = Math.max(bestKills, kills);
   SFX.death();
 
-  // drop weapon (pistol is infinite default, not a real drop)
-  if (player.weapon !== 'pistol') {
+  // drop weapon (pistol is infinite default, not a real drop). Trader-only
+  // weapons evaporate on death rather than dropping — they can't exist on the
+  // ground.
+  if (shouldDropOldWeapon(player.weapon)) {
     dropGunAt(player.x, player.y, player.weapon, 60);
-    player.weapon = 'pistol';
   }
+  player.weapon = 'pistol';
   // drop money as a small shower of coins
   const drop = player.money;
   player.money = 0;
@@ -5112,6 +5222,8 @@ function hardReset() {
   healPulses.length = 0;
   pendingEvent = null;
   activeEvent = null;
+  trader = null;
+  traderCooldown = 0;
   shopTab = 'upgrades';
   shakeAmt = 0; flashRed = 0; nearbyGun = null;
   player.weapon = 'pistol';
@@ -5221,6 +5333,51 @@ function render() {
   ctx.fillText('SHOP', shop.x + shop.w / 2, shop.y - 8);
 
   // storage chest in the bottom-left corner of the shop rect
+  // Trader NPC — drawn inside the shop when present. A simple humanoid with
+  // a purple cloak; floats a "TRADER" label above so the player can see it
+  // from across the arena.
+  if (trader) {
+    const tx = shop.x + shop.w - 32;
+    const ty = shop.y + 56;
+    const bob = Math.sin(gameTime * 2.4) * 1.6;
+    // purple aura
+    const aura = ctx.createRadialGradient(tx, ty, 4, tx, ty, 28);
+    aura.addColorStop(0, 'rgba(196, 126, 255, 0.35)');
+    aura.addColorStop(1, 'rgba(196, 126, 255, 0)');
+    ctx.fillStyle = aura;
+    ctx.beginPath(); ctx.arc(tx, ty, 28, 0, Math.PI * 2); ctx.fill();
+    // cloak
+    ctx.fillStyle = '#5a3a8a';
+    ctx.beginPath();
+    ctx.moveTo(tx - 11, ty + 12 + bob);
+    ctx.lineTo(tx + 11, ty + 12 + bob);
+    ctx.lineTo(tx + 8, ty - 6 + bob);
+    ctx.lineTo(tx - 8, ty - 6 + bob);
+    ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = '#0a0a14';
+    ctx.lineWidth = 1; ctx.stroke();
+    // head
+    ctx.fillStyle = '#e8d5b0';
+    ctx.beginPath(); ctx.arc(tx, ty - 10 + bob, 5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    // pointed hood / hat
+    ctx.fillStyle = '#3a1a5a';
+    ctx.beginPath();
+    ctx.moveTo(tx - 6, ty - 8 + bob); ctx.lineTo(tx + 6, ty - 8 + bob);
+    ctx.lineTo(tx, ty - 20 + bob); ctx.closePath(); ctx.fill();
+    // money-pouch on the cloak
+    ctx.fillStyle = '#ffd166';
+    ctx.beginPath(); ctx.arc(tx + 7, ty + 6 + bob, 3, 0, Math.PI * 2); ctx.fill();
+    // label
+    ctx.fillStyle = '#c47eff';
+    ctx.font = 'bold 9px system-ui';
+    ctx.textAlign = 'center';
+    ctx.fillText('TRADER', tx, ty - 24);
+    ctx.fillStyle = '#9aa0ab';
+    ctx.font = '8px system-ui';
+    ctx.fillText(`${trader.wavesLeft}w left`, tx, ty + 24);
+    ctx.textAlign = 'left';
+  }
+
   storageChest.x = shop.x + 6;
   storageChest.y = shop.y + shop.h - storageChest.h - 6;
   const sc = storageChest;
@@ -8454,6 +8611,7 @@ function drawShop() {
   const accent = shopTab === 'arsenal' ? '#d63030'
               : shopTab === 'storage' ? '#ffd166'
               : shopTab === 'pets'    ? '#80ffe0'
+              : shopTab === 'trader'  ? '#c47eff'
               : '#5a87c4';
   ctx.fillStyle = 'rgba(8, 10, 16, 0.94)';
   ctx.fillRect(x, y, w, h);
@@ -8473,8 +8631,13 @@ function drawShop() {
     { id: 'upgrades', label: 'Upgrades', color: '#5a87c4' },
     { id: 'arsenal',  label: 'Arsenal',  color: '#d63030' },
     { id: 'pets',     label: 'Pets',     color: '#80ffe0' },
-    { id: 'storage',  label: `Storage${storage.length ? ' · ' + storage.length : ''}`, color: '#ffd166' },
   ];
+  // Trader tab appears only while the trader is in town. Shows the waves
+  // remaining as a soft countdown right in the label.
+  if (trader) tabs.push({ id: 'trader', label: `Trader · ${trader.wavesLeft}w`, color: '#c47eff' });
+  tabs.push({ id: 'storage', label: `Storage${storage.length ? ' · ' + storage.length : ''}`, color: '#ffd166' });
+  // If the active tab became invalid (e.g., trader left), fall back to upgrades.
+  if (shopTab === 'trader' && !trader) shopTab = 'upgrades';
   const tabY = y + 56;
   const tabH = 26;
   const tabW = (w - 28 - (tabs.length - 1) * 6) / tabs.length;
@@ -8632,6 +8795,21 @@ function drawShop() {
       ly += rowH + 6;
     }
     contentBottom = ly;
+  } else if (shopTab === 'trader' && trader) {
+    // Trader's exclusive stock — visually mirrors the Arsenal layout but
+    // colored purple to reinforce that it's a special temporary tab.
+    ctx.fillStyle = '#9aa0ab';
+    ctx.font = '10px system-ui';
+    ctx.fillText(`leaves in ${trader.wavesLeft} wave${trader.wavesLeft === 1 ? '' : 's'} · only sold here`, bodyX, bodyY);
+    let ly = bodyY + 16;
+    ctx.fillStyle = '#c47eff';
+    ctx.font = 'bold 11px system-ui';
+    ctx.fillText('EXCLUSIVE GAGS', bodyX, ly);
+    ly += 12;
+    // Reuse drawArsenalList's row layout, but route through the trader's
+    // stock list (with the trader's accent color rather than red).
+    ly = drawTraderList(bodyX, ly, bodyW, sy, clipY, clipH);
+    contentBottom = ly;
   } else if (shopTab === 'storage') {
     ctx.fillStyle = '#9aa0ab';
     ctx.font = '10px system-ui';
@@ -8773,6 +8951,66 @@ function drawArsenalList(x, y, w, entries, kind, sy, clipY, clipH) {
         rect: rowRect,
         action: () => (kind === 'weapon' ? buyArsenalPrimary(id) : buyArsenalSecondary(id)),
       });
+    }
+    ly += rowH;
+  }
+  return ly;
+}
+
+// Trader-stock list — same row layout as the Arsenal but accented purple
+// to flag the temporary, exclusive nature of the inventory.
+function drawTraderList(x, y, w, sy, clipY, clipH) {
+  const rowH = 44;
+  const iconCol = 40;
+  let ly = y;
+  for (const entry of TRADER_STOCK) {
+    const def = WEAPONS[entry.id];
+    if (!def) continue;
+    const equipped = player.weapon === entry.id;
+    const can = player.money >= entry.cost && !equipped;
+    const rowRect = { x, y: ly, w, h: rowH };
+    const screenY = ly - sy;
+    const visible = screenY + rowH > clipY && screenY < clipY + clipH;
+    const hover = can && visible && pointInRect(mouse, { x, y: screenY, w, h: rowH });
+    ctx.fillStyle = hover ? 'rgba(196, 126, 255, 0.14)' : 'rgba(20, 22, 30, 0.5)';
+    ctx.fillRect(rowRect.x, rowRect.y, rowRect.w, rowRect.h);
+    ctx.fillStyle = '#c47eff';
+    ctx.fillRect(rowRect.x, rowRect.y, 2, rowRect.h);
+    const iconX = rowRect.x + 4;
+    const iconY = rowRect.y + 2;
+    ctx.fillStyle = '#0d0f16';
+    ctx.fillRect(iconX, iconY, iconCol - 6, rowH - 4);
+    ctx.strokeStyle = def.color;
+    ctx.lineWidth = 1;
+    ctx.strokeRect(iconX + 0.5, iconY + 0.5, iconCol - 7, rowH - 5);
+    const cx = iconX + (iconCol - 6) / 2;
+    const cy = iconY + (rowH - 4) / 2;
+    drawShopWeaponIcon(entry.id, cx, cy, rowH - 12);
+    const textX = rowRect.x + iconCol + 4;
+    const textW = w - iconCol - 4 - 70;
+    ctx.fillStyle = equipped ? '#666' : can ? '#fff' : '#5a5d66';
+    fitFont(def.name, textW, 'bold 13px system-ui', 10);
+    ctx.textAlign = 'left';
+    ctx.fillText(def.name, textX, rowRect.y + 19);
+    if (def.desc) {
+      ctx.fillStyle = '#888c95';
+      fitFont(def.desc, textW, '10px system-ui', 8);
+      ctx.fillText(def.desc, textX, rowRect.y + 33);
+    }
+    ctx.textAlign = 'right';
+    if (equipped) {
+      ctx.fillStyle = '#8be08b';
+      ctx.font = 'bold 10px system-ui';
+      ctx.fillText('EQUIPPED', rowRect.x + w - 4, rowRect.y + 26);
+    } else {
+      ctx.fillStyle = can ? '#ffce44' : '#666';
+      ctx.font = 'bold 13px system-ui';
+      ctx.fillText(`$${entry.cost}`, rowRect.x + w - 4, rowRect.y + 26);
+    }
+    ctx.textAlign = 'left';
+    if (can) {
+      const id = entry.id;
+      shopBuyRects.push({ rect: rowRect, action: () => buyTraderWeapon(id) });
     }
     ly += rowH;
   }
