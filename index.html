@@ -7946,6 +7946,159 @@ function handleMenuAction(id) {
   updateMusicForState();
 }
 
+// Tiny pictogram per cheats section so each one is recognizable at a glance.
+// Drawn at (cx, cy) at the given size, in the section's accent color.
+function drawCheatSectionIcon(id, cx, cy, size, color) {
+  ctx.save();
+  ctx.translate(cx, cy);
+  const s = size * 0.5;
+  ctx.fillStyle = color;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.4;
+  switch (id) {
+    case 'player': // bust silhouette
+      ctx.beginPath(); ctx.arc(0, -s * 0.45, s * 0.42, 0, Math.PI*2); ctx.fill();
+      ctx.fillRect(-s * 0.55, -s * 0.05, s * 1.1, s * 0.75);
+      break;
+    case 'waves': // double crest
+      ctx.beginPath();
+      ctx.moveTo(-s, s * 0.25);
+      ctx.quadraticCurveTo(-s * 0.5, -s * 0.6, 0, s * 0.25);
+      ctx.quadraticCurveTo(s * 0.5, s * 0.9, s, s * 0.25);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(-s, -s * 0.35);
+      ctx.quadraticCurveTo(-s * 0.5, -s, 0, -s * 0.35);
+      ctx.quadraticCurveTo(s * 0.5, s * 0.2, s, -s * 0.35);
+      ctx.stroke();
+      break;
+    case 'spawn': // zombie head with two dark eyes
+      ctx.beginPath(); ctx.arc(0, 0, s * 0.8, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = '#0e1018';
+      ctx.beginPath(); ctx.arc(-s * 0.28, -s * 0.18, s * 0.15, 0, Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.arc( s * 0.28, -s * 0.18, s * 0.15, 0, Math.PI*2); ctx.fill();
+      break;
+    case 'loadout': // package with cross-tape
+      ctx.fillRect(-s * 0.7, -s * 0.6, s * 1.4, s * 1.2);
+      ctx.fillStyle = '#0e1018';
+      ctx.fillRect(-s * 0.08, -s * 0.6, s * 0.16, s * 1.2);
+      ctx.fillRect(-s * 0.7, -s * 0.08, s * 1.4, s * 0.16);
+      break;
+    case 'audio': // speaker
+      ctx.fillRect(-s * 0.6, -s * 0.35, s * 0.35, s * 0.7);
+      ctx.beginPath();
+      ctx.moveTo(-s * 0.25, -s * 0.7);
+      ctx.lineTo( s * 0.4,  -s * 0.3);
+      ctx.lineTo( s * 0.4,   s * 0.3);
+      ctx.lineTo(-s * 0.25,  s * 0.7);
+      ctx.closePath(); ctx.fill();
+      break;
+    case 'abilities': // lightning bolt
+      ctx.beginPath();
+      ctx.moveTo( s * 0.15, -s);
+      ctx.lineTo(-s * 0.45, s * 0.1);
+      ctx.lineTo( s * 0.0,  s * 0.1);
+      ctx.lineTo(-s * 0.2,   s);
+      ctx.lineTo( s * 0.5, -s * 0.1);
+      ctx.lineTo( s * 0.05, -s * 0.1);
+      ctx.closePath(); ctx.fill();
+      break;
+    case 'pets': // paw print
+      ctx.beginPath(); ctx.arc(0, s * 0.25, s * 0.42, 0, Math.PI*2); ctx.fill();
+      for (let i = 0; i < 4; i++) {
+        const ax = -s * 0.55 + i * s * 0.37;
+        ctx.beginPath(); ctx.arc(ax, -s * 0.4, s * 0.18, 0, Math.PI*2); ctx.fill();
+      }
+      break;
+    case 'events': // 8-point burst
+      ctx.beginPath();
+      for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * Math.PI * 2;
+        const r = i % 2 === 0 ? s : s * 0.45;
+        const px = Math.cos(a) * r, py = Math.sin(a) * r;
+        if (i === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+      }
+      ctx.closePath(); ctx.fill();
+      break;
+    case 'trader': // coin with $
+      ctx.beginPath(); ctx.arc(0, 0, s * 0.85, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = '#0e1018';
+      ctx.font = 'bold ' + Math.max(8, Math.round(s * 1.3)) + 'px system-ui';
+      ctx.textAlign = 'center';
+      ctx.fillText('$', 0, s * 0.45);
+      ctx.textAlign = 'left';
+      break;
+    case 'primary-basic':
+    case 'primary-special':
+    case 'primary-gag':
+    case 'primary-trader': // gun silhouette — barrel + grip
+      ctx.fillRect(-s * 0.8, -s * 0.15, s * 1.5, s * 0.35);
+      ctx.fillRect(-s * 0.65, s * 0.2, s * 0.3, s * 0.5);
+      // muzzle
+      ctx.fillStyle = '#0e1018';
+      ctx.fillRect(s * 0.55, -s * 0.05, s * 0.2, s * 0.12);
+      break;
+    case 'secondary-melee': // sword
+      ctx.fillRect(-s * 0.7, -s * 0.08, s * 1.4, s * 0.18); // blade
+      ctx.fillRect(-s * 0.8, -s * 0.25, s * 0.15, s * 0.5); // pommel
+      ctx.fillRect(-s * 0.65, -s * 0.35, s * 0.1, s * 0.7); // guard
+      break;
+    case 'secondary-thrown': // throwing-knife triangle + ring
+      ctx.beginPath();
+      ctx.moveTo( s,        0);
+      ctx.lineTo(-s * 0.2, -s * 0.35);
+      ctx.lineTo(-s * 0.2,  s * 0.35);
+      ctx.closePath(); ctx.fill();
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1.4;
+      ctx.beginPath(); ctx.arc(-s * 0.6, 0, s * 0.28, 0, Math.PI*2); ctx.stroke();
+      break;
+    case 'secondary-utility': // medical cross
+      ctx.fillRect(-s * 0.18, -s * 0.7, s * 0.36, s * 1.4);
+      ctx.fillRect(-s * 0.7, -s * 0.18, s * 1.4, s * 0.36);
+      break;
+    case 'secondary-tomes': // book with spine line
+      ctx.fillRect(-s * 0.7, -s * 0.85, s * 1.4, s * 1.7);
+      ctx.fillStyle = '#0e1018';
+      ctx.fillRect(-s * 0.05, -s * 0.85, s * 0.1, s * 1.7);
+      // small bookmark
+      ctx.fillStyle = color;
+      ctx.fillRect(s * 0.35, -s * 0.85, s * 0.18, s * 0.6);
+      break;
+    case 'stats': // horizontal slider track + knob
+      ctx.fillRect(-s * 0.8, -s * 0.08, s * 1.6, s * 0.16);
+      ctx.beginPath(); ctx.arc(s * 0.15, 0, s * 0.3, 0, Math.PI*2); ctx.fill();
+      break;
+  }
+  ctx.restore();
+}
+
+// Per-section accent colors. Picked to echo each section's role in-game so
+// the visual identity carries through to the cheats panel.
+function cheatSectionColor(id) {
+  switch (id) {
+    case 'player':            return '#7ec8ff';
+    case 'waves':             return '#ff5050';
+    case 'spawn':             return '#ff8060';
+    case 'loadout':           return '#5a87c4';
+    case 'audio':             return '#9aa0ab';
+    case 'abilities':         return '#5cffec';
+    case 'pets':              return '#80ffe0';
+    case 'events':            return '#ffd166';
+    case 'trader':            return '#c47eff';
+    case 'primary-basic':     return '#7ec8ff';
+    case 'primary-special':   return '#c47eff';
+    case 'primary-gag':       return '#ffd166';
+    case 'primary-trader':    return '#c47eff';
+    case 'secondary-melee':   return '#e8edf4';
+    case 'secondary-thrown':  return '#8aa0b4';
+    case 'secondary-utility': return '#5cd86b';
+    case 'secondary-tomes':   return '#c47eff';
+    default:                  return '#88aadd';
+  }
+}
+
 function drawCheats() {
   // hidden until the player enters the unlock code
   if (!cheatsUnlocked) {
@@ -7959,39 +8112,45 @@ function drawCheats() {
     return;
   }
   const x = cheatsPanel.x, y = cheatsPanel.y;
-  const w = cheatsPanel.w, btnH = 22, header = 24, secH = 18, sliderH = 22;
+  const w = cheatsPanel.w, btnH = 22, header = 26, secH = 22, sliderH = 22;
   // Compute height by walking the same layout we'll use below
   let bodyH = 0;
   if (cheatsOpen) {
     for (const sec of cheatSections) {
       bodyH += secH + 2;
-      if (sec.open) bodyH += sec.items.length * (btnH + 3) + 4;
+      if (sec.open) bodyH += sec.items.length * (btnH + 2) + 4;
     }
     bodyH += secH + 2; // STATS header always reserves a row
     if (slidersOpen) bodyH += cheatSliders.length * (sliderH + 2) + 6;
   }
   const h = cheatsOpen ? header + bodyH + 6 : header;
-  ctx.fillStyle = 'rgba(8, 10, 16, 0.92)';
+  // Outer panel — slightly more opaque than before, single-pixel border
+  ctx.fillStyle = 'rgba(10, 12, 18, 0.96)';
   ctx.fillRect(x, y, w, h);
-  ctx.strokeStyle = godMode ? '#8be08b' : '#5a87c4';
+  ctx.strokeStyle = godMode ? '#8be08b' : '#33363f';
   ctx.lineWidth = 1;
-  ctx.strokeRect(x, y, w, h);
+  ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
 
-  // header — also a drag handle
+  // Top header — drag handle + title + master chevron
   ctx.fillStyle = cheatsDrag ? '#1c2030' : '#0e1018';
   ctx.fillRect(x, y, w, header);
+  // bottom 1px divider for the header
+  ctx.fillStyle = '#22252e';
+  ctx.fillRect(x, y + header - 1, w, 1);
+  // grip dots (top-left)
   ctx.fillStyle = '#5a87c4';
   for (let k = 0; k < 3; k++) {
-    ctx.fillRect(x + 5, y + 8 + k * 4, 3, 2);
-    ctx.fillRect(x + 11, y + 8 + k * 4, 3, 2);
+    ctx.fillRect(x + 6, y + 9 + k * 4, 3, 2);
+    ctx.fillRect(x + 12, y + 9 + k * 4, 3, 2);
   }
-  ctx.fillStyle = '#88aadd';
-  ctx.font = 'bold 11px system-ui';
+  ctx.fillStyle = '#a8c5f0';
+  ctx.font = 'bold 12px system-ui';
   ctx.textAlign = 'left';
-  ctx.fillText('CHEATS', x + 22, y + 16);
+  ctx.fillText('CHEATS', x + 24, y + 17);
   ctx.fillStyle = '#9aa0ab';
   ctx.textAlign = 'right';
-  ctx.fillText(cheatsOpen ? '▾' : '▸', x + w - 10, y + 16);
+  ctx.font = '12px system-ui';
+  ctx.fillText(cheatsOpen ? '▾' : '▸', x + w - 10, y + 17);
   ctx.textAlign = 'left';
 
   cheatsHeaderRect = { x, y, w, h: header };
@@ -8009,21 +8168,35 @@ function drawCheats() {
   let by = y + header + 4;
   // Render each section: collapsible header + (when open) buttons
   for (const sec of cheatSections) {
-    const secRect = { x: x + 8, y: by, w: w - 16, h: secH, sec };
+    const accent = cheatSectionColor(sec.id);
+    const secRect = { x: x + 6, y: by, w: w - 12, h: secH, sec };
     sec.headerRect = secRect;
     const hover = pointInRect(mouse, secRect);
-    ctx.fillStyle = hover ? '#1c2030' : '#11141c';
+    // Background — slightly lifted look when open
+    ctx.fillStyle = sec.open ? '#161924' : (hover ? '#1a1d28' : '#10131c');
     ctx.fillRect(secRect.x, secRect.y, secRect.w, secRect.h);
-    ctx.strokeStyle = '#33363f';
-    ctx.lineWidth = 1;
-    ctx.strokeRect(secRect.x, secRect.y, secRect.w, secRect.h);
-    ctx.fillStyle = '#88aadd';
+    // Left accent stripe in the section's color
+    ctx.fillStyle = accent;
+    ctx.fillRect(secRect.x, secRect.y, 3, secRect.h);
+    // Per-section icon — drawn at a fixed slot next to the stripe so it
+    // reads as a "category tag" even when the panel is scanned quickly.
+    drawCheatSectionIcon(sec.id, secRect.x + 16, secRect.y + secRect.h / 2, 12, accent);
+    // Section name in the same accent — colored when expanded for emphasis
+    ctx.fillStyle = sec.open ? accent : '#cfd3da';
     ctx.font = 'bold 10px system-ui';
     ctx.textAlign = 'left';
-    ctx.fillText(sec.name.toUpperCase(), secRect.x + 8, secRect.y + 12);
-    ctx.fillStyle = '#9aa0ab';
+    ctx.fillText(sec.name.toUpperCase(), secRect.x + 28, secRect.y + 14);
+    // Item-count badge (only when collapsed) + chevron
+    if (!sec.open) {
+      ctx.fillStyle = '#5a5d66';
+      ctx.font = '9px system-ui';
+      ctx.textAlign = 'right';
+      ctx.fillText(`${sec.items.length}`, secRect.x + secRect.w - 18, secRect.y + 14);
+    }
+    ctx.fillStyle = sec.open ? accent : '#5a5d66';
+    ctx.font = '10px system-ui';
     ctx.textAlign = 'right';
-    ctx.fillText(sec.open ? '▾' : '▸', secRect.x + secRect.w - 8, secRect.y + 12);
+    ctx.fillText(sec.open ? '▾' : '▸', secRect.x + secRect.w - 6, secRect.y + 14);
     ctx.textAlign = 'left';
     by += secH + 2;
     if (!sec.open) {
@@ -8032,42 +8205,71 @@ function drawCheats() {
     }
     for (const c of sec.items) {
       const isOn = c.toggle ? c.toggle() : false;
-      const rect = { x: x + 14, y: by, w: w - 28, h: btnH };
+      const rect = { x: x + 10, y: by, w: w - 20, h: btnH };
       c.rect = rect;
       const bhov = pointInRect(mouse, rect);
-      ctx.fillStyle = isOn ? '#2e5a2e' : (bhov ? '#262b36' : '#1c1f28');
+      // Body — toggled-on gets a soft green tint, otherwise hover/idle
+      if (isOn) {
+        ctx.fillStyle = '#1e3a26';
+      } else if (bhov) {
+        ctx.fillStyle = '#1c2030';
+      } else {
+        ctx.fillStyle = '#14171f';
+      }
       ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
-      ctx.strokeStyle = isOn ? '#8be08b' : (bhov ? '#7ec8ff' : '#33363f');
-      ctx.lineWidth = 1;
-      ctx.strokeRect(rect.x, rect.y, rect.w, rect.h);
-      ctx.fillStyle = '#fff';
-      ctx.textAlign = 'center';
+      // Faint left stripe in the section accent — continues the visual link
+      // from header to items
+      ctx.save();
+      ctx.globalAlpha = isOn ? 0.95 : (bhov ? 0.6 : 0.25);
+      ctx.fillStyle = accent;
+      ctx.fillRect(rect.x, rect.y, 2, rect.h);
+      ctx.restore();
+      // Label — left aligned, simple. fitFont keeps long labels from spilling.
       const labelStr = typeof c.label === 'function' ? c.label() : c.label;
-      const display = c.toggle ? `${labelStr}: ${isOn ? 'ON' : 'OFF'}` : labelStr;
-      // shrink long labels (e.g. "Gun: Chicken Launcher") so they never spill
-      fitFont(display, rect.w - 8, 'bold 11px system-ui', 9);
-      ctx.fillText(display, rect.x + rect.w / 2, rect.y + 15);
-      by += btnH + 3;
+      ctx.fillStyle = isOn ? '#bff0bf' : (bhov ? '#fff' : '#dfe2e8');
+      const rightPad = c.toggle ? 22 : 10;
+      fitFont(labelStr, rect.w - 14 - rightPad, 'bold 11px system-ui', 9);
+      ctx.textAlign = 'left';
+      ctx.fillText(labelStr, rect.x + 10, rect.y + 15);
+      // Toggle dot — replaces the old "ON/OFF" suffix. Green pulse when on,
+      // dim gray ring when off.
+      if (c.toggle) {
+        const dx = rect.x + rect.w - 12;
+        const dy = rect.y + rect.h / 2;
+        if (isOn) {
+          ctx.fillStyle = 'rgba(139, 224, 139, 0.35)';
+          ctx.beginPath(); ctx.arc(dx, dy, 7, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = '#8be08b';
+          ctx.beginPath(); ctx.arc(dx, dy, 4, 0, Math.PI * 2); ctx.fill();
+        } else {
+          ctx.strokeStyle = '#3a3d46';
+          ctx.lineWidth = 1.5;
+          ctx.beginPath(); ctx.arc(dx, dy, 4.5, 0, Math.PI * 2); ctx.stroke();
+        }
+      }
+      by += btnH + 2;
     }
     by += 2;
   }
 
-  // STATS section header — collapsible (matches the cheat-section style)
-  const slidersHeader = { x: x + 8, y: by, w: w - 16, h: secH };
+  // STATS section header — uses the same styled-section visuals
+  const statsColor = '#9aa0ab';
+  const slidersHeader = { x: x + 6, y: by, w: w - 12, h: secH };
   slidersHeaderRect = slidersHeader;
   const hovHeader = pointInRect(mouse, slidersHeader);
-  ctx.fillStyle = hovHeader ? '#1c2030' : '#11141c';
+  ctx.fillStyle = slidersOpen ? '#161924' : (hovHeader ? '#1a1d28' : '#10131c');
   ctx.fillRect(slidersHeader.x, slidersHeader.y, slidersHeader.w, slidersHeader.h);
-  ctx.strokeStyle = '#33363f';
-  ctx.lineWidth = 1;
-  ctx.strokeRect(slidersHeader.x, slidersHeader.y, slidersHeader.w, slidersHeader.h);
-  ctx.fillStyle = '#88aadd';
+  ctx.fillStyle = statsColor;
+  ctx.fillRect(slidersHeader.x, slidersHeader.y, 3, slidersHeader.h);
+  drawCheatSectionIcon('stats', slidersHeader.x + 16, slidersHeader.y + slidersHeader.h / 2, 12, statsColor);
+  ctx.fillStyle = slidersOpen ? statsColor : '#cfd3da';
   ctx.font = 'bold 10px system-ui';
   ctx.textAlign = 'left';
-  ctx.fillText('STATS', slidersHeader.x + 8, slidersHeader.y + 12);
-  ctx.fillStyle = '#9aa0ab';
+  ctx.fillText('STATS', slidersHeader.x + 28, slidersHeader.y + 14);
+  ctx.fillStyle = slidersOpen ? statsColor : '#5a5d66';
+  ctx.font = '10px system-ui';
   ctx.textAlign = 'right';
-  ctx.fillText(slidersOpen ? '▾' : '▸', slidersHeader.x + slidersHeader.w - 8, slidersHeader.y + 12);
+  ctx.fillText(slidersOpen ? '▾' : '▸', slidersHeader.x + slidersHeader.w - 6, slidersHeader.y + 14);
   ctx.textAlign = 'left';
   by += secH + 2;
 
