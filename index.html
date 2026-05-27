@@ -3344,6 +3344,7 @@ function buyArsenalSecondary(id) {
 // unbounded — oldest entry falls off when full.
 const STORAGE_CAP = 12;
 const storage = []; // entries: { kind: 'weapon'|'secondary', id, color, tag, name }
+let storedMoney = 0; // $ banked when coins despawn before pickup — Claim from the Storage tab
 // Small chest visual in the corner of the shop world rect
 const storageChest = { x: 0, y: 0, w: 36, h: 28 }; // positioned during render
 
@@ -6251,7 +6252,11 @@ function updateBullets(dt) {
         turnRate = 9;
       } else {
         const phase = Math.max(0, Math.min(1, b.chakramTimer / b.outTime));
-        turnRate = 2 + phase * 12; // 2 rad/s → 14 rad/s across the outgoing phase
+        // Old "2 + phase*12" rate left the disc unable to steer for the
+        // first half of its flight — "sometimes the chakram won't follow
+        // the cursor". Bumped to a much higher floor so the disc always
+        // tracks the mouse from launch.
+        turnRate = 7 + phase * 8; // 7 rad/s → 15 rad/s across the outgoing phase
       }
       const turn = Math.sign(da) * Math.min(Math.abs(da), turnRate * dt);
       const newA = curA + turn;
@@ -6625,6 +6630,9 @@ function updateCoins(dt) {
       SFX.coin();
       coins.splice(i, 1);
     } else if (k.life <= 0) {
+      // Coin expired without being picked up — bank its value instead of
+      // letting it vanish. The Storage tab shows a Claim button.
+      storedMoney += k.value;
       coins.splice(i, 1);
     }
   }
@@ -6749,6 +6757,7 @@ function hardReset() {
   healFields.length = 0;
   decals.length = 0;
   storage.length = 0;
+  storedMoney = 0;
   pets.length = 0;
   ownedPets.clear();
   zombieBullets.length = 0;
@@ -11298,19 +11307,54 @@ function drawShop() {
   } else if (shopTab === 'storage') {
     ctx.fillStyle = '#9aa0ab';
     ctx.font = '10px system-ui';
-    ctx.fillText('lost weapons collect here · click to retrieve', bodyX, bodyY);
+    ctx.fillText('lost items + uncollected money bank here', bodyX, bodyY);
+
+    // Banked-money row (always shown — gives the player feedback even when 0)
+    let storageRowY = bodyY + 16;
+    const moneyRect = { x: bodyX, y: storageRowY, w: bodyW, h: 36 };
+    const claimable = storedMoney > 0;
+    const moneyHover = claimable && pointInRect(mouse, moneyRect);
+    ctx.fillStyle = moneyHover ? 'rgba(255, 209, 102, 0.18)' : 'rgba(255, 209, 102, 0.10)';
+    ctx.fillRect(moneyRect.x, moneyRect.y, moneyRect.w, moneyRect.h);
+    ctx.fillStyle = '#ffd166';
+    ctx.fillRect(moneyRect.x, moneyRect.y, 3, moneyRect.h);
+    ctx.fillStyle = claimable ? '#ffe89a' : '#5a5d66';
+    ctx.font = 'bold 13px system-ui';
+    ctx.textAlign = 'left';
+    ctx.fillText('Banked Money', moneyRect.x + 12, moneyRect.y + 16);
+    ctx.fillStyle = '#888c95';
+    ctx.font = '10px system-ui';
+    ctx.fillText('uncollected coins bank here for later', moneyRect.x + 12, moneyRect.y + 30);
+    ctx.textAlign = 'right';
+    ctx.fillStyle = claimable ? '#ffd166' : '#5a5d66';
+    ctx.font = 'bold 14px system-ui';
+    ctx.fillText(claimable ? `$${storedMoney}  ▸  Claim` : '$0', moneyRect.x + bodyW - 10, moneyRect.y + 23);
+    ctx.textAlign = 'left';
+    if (claimable) {
+      shopBuyRects.push({
+        rect: moneyRect,
+        action: () => {
+          player.money += storedMoney;
+          storedMoney = 0;
+          SFX.coin && SFX.coin();
+        },
+      });
+    }
+    const itemsTop = storageRowY + 44;
+
     if (storage.length === 0) {
       ctx.fillStyle = '#5a5d66';
       ctx.font = '12px system-ui';
-      ctx.fillText('(empty — nothing has despawned yet)', bodyX, bodyY + 30);
+      ctx.fillText('(no items stored)', bodyX, itemsTop + 14);
+      contentBottom = itemsTop + 28;
     } else {
       const cellW = 64, cellH = 64, gap = 6;
       const cols = Math.floor((bodyW + gap) / (cellW + gap));
-      let lastBottom = bodyY + 18;
+      let lastBottom = itemsTop;
       for (let i = 0; i < storage.length; i++) {
         const item = storage[i];
         const cx = bodyX + (i % cols) * (cellW + gap);
-        const cy = bodyY + 18 + Math.floor(i / cols) * (cellH + gap);
+        const cy = itemsTop + Math.floor(i / cols) * (cellH + gap);
         const rect = { x: cx, y: cy, w: cellW, h: cellH };
         const screenRect = { x: cx, y: cy - sy, w: cellW, h: cellH };
         const hover = pointInRect(mouse, screenRect)
