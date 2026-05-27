@@ -3805,7 +3805,7 @@ function fireArenaEvent(type) {
       if (x > shop.x - 20 && x < shop.x + shop.w + 20 && y > shop.y - 20 && y < shop.y + shop.h + 20) continue;
       ok = true;
     }
-    healFields.push({ x, y, r: 60, life: 12, max: 12, hps: 14 });
+    healFields.push({ x, y, r: 60, life: 12, max: 12, hps: 14, color: '#5cd86b' });
     floaters.push({ x: W / 2, y: 96, text: 'EVENT: Heal Zone', life: 2.0, color: '#5cd86b' });
   }
 }
