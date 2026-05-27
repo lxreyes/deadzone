@@ -810,6 +810,45 @@ const WEAPONS = {
   noodle:  { name: 'Spaghetti Beam',  shots: 1, spread: 0.0, damage: 1.6, fireRate: 24, bulletSpeed: 7.0, pierce: 99, life: 0.35, color: '#ff5050', tag: 'N', traderOnly: true,
              bulletKind: 'laser', explodesIntoSauce: true,
              desc: 'Sustained sauce laser · sauce splat on kill' },
+  // ---- Food Trader exclusives ----
+  // Cheaper / weaker than the main trader's gag guns. The Food Trader visits
+  // more often and stays for 5 waves so these are the easier-access novelty
+  // tier; the regular trader's stock is the rarer, beefier option.
+  burger:  { name: 'Burger Blaster',  shots: 1, spread: 0.04, damage: 1.4, fireRate: 1.5, bulletSpeed: 0.9, pierce: 0, life: 1.0, color: '#c47a3a', tag: 'B', traderOnly: true,
+             explosive: true, blastR: 50, blastDmg: 14,
+             bulletKind: 'burger',
+             desc: 'Sloppy patty · small mustard splash' },
+  bagel:   { name: 'Bagel Cutter',    shots: 1, spread: 0.0,  damage: 1.2, fireRate: 1.6, bulletSpeed: 1.1, pierce: 4, life: 1.6, color: '#d9a64a', tag: 'O', traderOnly: true,
+             bulletKind: 'bagel',
+             desc: 'Whirling bagel · slices a clean line' },
+  donut:   { name: 'Donut Driller',   shots: 3, spread: 0.18, damage: 0.9, fireRate: 1.8, bulletSpeed: 1.0, pierce: 1, life: 1.2, color: '#ff9bd1', tag: 'D', traderOnly: true,
+             bulletKind: 'donut',
+             desc: 'Triplet of sticky donuts · sprinkles fly' },
+  kebab:   { name: 'Kebab Skewer',    shots: 1, spread: 0.0,  damage: 2.0, fireRate: 0.7, bulletSpeed: 1.4, pierce: 3, life: 1.8, color: '#a35a2a', tag: 'K', traderOnly: true,
+             bulletKind: 'kebab',
+             desc: 'Long skewer · pierces a small line' },
+  soda:    { name: 'Soda Spritz',     shots: 8, spread: 0.40, damage: 0.55, fireRate: 5.0, bulletSpeed: 0.8, pierce: 0, life: 0.5, color: '#52cfff', tag: 'S', traderOnly: true,
+             bulletKind: 'soda', slowOnHit: 1.4,
+             desc: 'Carbonated geyser · soaks and slows' },
+  // ---- More non-food gag exclusives (older trader) ----
+  // The regular trader pivoted away from food entirely once the Food Trader
+  // showed up. These are pricier, beefier novelty weapons — louder mechanics,
+  // splashier visuals. Same traderOnly invariant: never drops, never stored.
+  bubble:    { name: 'Bubble Blaster',  shots: 1, spread: 0.0, damage: 0.8, fireRate: 1.2, bulletSpeed: 0.7, pierce: 0, life: 2.0, color: '#9be0ff', tag: 'B', traderOnly: true,
+               explosive: true, blastR: 110, blastDmg: 22, bulletKnock: 380, bulletKind: 'bubble',
+               desc: 'Floating bubble · wide soapy pop · launches zombies' },
+  harpoon:   { name: 'Harpoon Cannon',  shots: 1, spread: 0.0, damage: 4.5, fireRate: 0.55, bulletSpeed: 1.6, pierce: 6, life: 2.0, color: '#a0a8b8', tag: 'H', traderOnly: true,
+               bulletKind: 'harpoon',
+               desc: 'Heavy iron harpoon · spears a long line' },
+  discoball: { name: 'Disco Ball',      shots: 1, spread: 0.0, damage: 1.4, fireRate: 1.1, bulletSpeed: 1.0, pierce: 0, life: 2.6, color: '#ff5cd0', tag: 'D', traderOnly: true,
+               bulletKind: 'disco', bounces: 8, stunOnHit: 0.7,
+               desc: 'Bouncing strobe orb · stuns on contact' },
+  boomerang: { name: 'Boomerang',       shots: 1, spread: 0.0, damage: 1.2, fireRate: 1.0, bulletSpeed: 1.1, pierce: 5, life: 1.8, color: '#d8a060', tag: 'R', traderOnly: true,
+               bulletKind: 'boomerang', clearHitsInterval: 0.25,
+               desc: 'Whirling wood · pierces and re-hits as it spins' },
+  vacuum:    { name: 'Reverse Vacuum',  shots: 5, spread: 0.30, damage: 0.45, fireRate: 5.5, bulletSpeed: 0.9, pierce: 0, life: 0.6, color: '#cfa84c', tag: 'V', traderOnly: true,
+               bulletKind: 'dust', bulletKnock: -260,
+               desc: 'Sucks zombies in · debris stream pulls on hit' },
   // ---- God-tier (cheats-only) ----
   // cheatOnly weapons never drop, never appear in Arsenal/Storage, and can
   // only be equipped from the cheats panel. They're absurdly powerful by
@@ -841,13 +880,32 @@ const WEAPONS = {
 };
 // Trader stock — id + cost. Prices are deliberately higher than Arsenal
 // because these weapons are exclusive and the trader only visits sometimes.
+// Older trader's stock — non-food gag exclusives. The food-themed weapons
+// (fish/pizza/toaster/noodle) all moved to the Food Trader; the regular
+// trader now stocks only louder novelty gags.
 const TRADER_STOCK = [
-  { id: 'fish',     cost: 1500 },
-  { id: 'pizza',    cost: 1750 },
-  { id: 'toaster',  cost: 2200 },
-  { id: 'confetti', cost: 1800 },
-  { id: 'mower',    cost: 1900 },
-  { id: 'noodle',   cost: 2400 },
+  { id: 'confetti',  cost: 1800 },
+  { id: 'mower',     cost: 1900 },
+  { id: 'bubble',    cost: 1700 },
+  { id: 'harpoon',   cost: 2200 },
+  { id: 'discoball', cost: 1900 },
+  { id: 'boomerang', cost: 1600 },
+  { id: 'vacuum',    cost: 1800 },
+];
+// Food Trader stock — strictly food-themed. Includes the original trader's
+// edible weapons at slightly reduced prices, plus 5 cheaper new gag guns
+// that are weaker than the regular trader's. The Food Trader visits more
+// often and stays longer (5 waves) — these are the entry-tier gag tier.
+const FOOD_TRADER_STOCK = [
+  { id: 'burger',  cost: 400  },
+  { id: 'bagel',   cost: 500  },
+  { id: 'donut',   cost: 600  },
+  { id: 'kebab',   cost: 700  },
+  { id: 'soda',    cost: 550  },
+  { id: 'fish',    cost: 1300 },
+  { id: 'pizza',   cost: 1500 },
+  { id: 'toaster', cost: 1900 },
+  { id: 'noodle',  cost: 2100 },
 ];
 const DROPPABLE_WEAPONS = ['shotgun', 'smg', 'rifle', 'rocket', 'chicken', 'banana', 'duck', 'plus', 'tesla', 'orbit', 'rail', 'twin', 'crossbow', 'flame'];
 
@@ -942,7 +1000,8 @@ const SECONDARY_GROUPS = [
   { name: 'Utility', ids: ['medkit', 'decoy', 'emp', 'healingField'] },
   { name: 'Tomes',   ids: ['chickenTome', 'batTome', 'wolfTome', 'spiderTome', 'spiritTome'] },
 ];
-const TRADER_PRIMARY_IDS = ['fish', 'pizza', 'toaster', 'confetti', 'mower', 'noodle'];
+const TRADER_PRIMARY_IDS = ['confetti', 'mower', 'bubble', 'harpoon', 'discoball', 'boomerang', 'vacuum'];
+const FOOD_TRADER_PRIMARY_IDS = ['burger', 'bagel', 'donut', 'kebab', 'soda', 'fish', 'pizza', 'toaster', 'noodle'];
 // God-tier weapons — only reachable through the cheats panel. Listed in one
 // place so the cheats UI and any future leak-prevention paths can share.
 const GODTIER_PRIMARY_IDS = ['death', 'apocalypse', 'omni', 'voidstar'];
@@ -1023,6 +1082,16 @@ let traderCooldown = 0;      // waves remaining before another arrival can roll
 const TRADER_STAY_WAVES = 3;
 const TRADER_ARRIVAL_CHANCE = 0.30; // chance per eligible wave-end
 const TRADER_COOLDOWN_WAVES = 5;    // waves before another arrival can roll
+
+// ---------- Food Trader (visits often, weaker / cheaper food-themed gags) ----
+// Independent of `trader` — both can be in the shop at once. The Food Trader
+// stocks all food-themed weapons plus 5 budget gag guns. Spawns more often
+// and stays longer than the main trader.
+let foodTrader = null;       // { wavesLeft } or null
+let foodTraderCooldown = 0;
+const FOOD_TRADER_STAY_WAVES = 5;
+const FOOD_TRADER_ARRIVAL_CHANCE = 0.55;
+const FOOD_TRADER_COOLDOWN_WAVES = 2;
 const decals  = []; // blood splats on the floor
 
 // Building catalog. Buildings snap to the 40px floor grid; w/h govern both
@@ -1615,6 +1684,13 @@ const cheatSections = [
       run() { player.weapon = id; },
     })),
   },
+  { id: 'primary-food-trader', name: 'Primary · Food Trader', open: false,
+    items: FOOD_TRADER_PRIMARY_IDS.map(id => ({
+      label: () => (player.weapon === id ? '★ ' : '') + WEAPONS[id].name,
+      toggle: () => player.weapon === id,
+      run() { player.weapon = id; },
+    })),
+  },
   // God-tier — cheats-only weapons that absolutely break the game on purpose
   { id: 'primary-godtier', name: 'Primary · GOD TIER', open: false,
     items: GODTIER_PRIMARY_IDS.map(id => ({
@@ -1663,6 +1739,17 @@ const cheatSections = [
     { label: 'Dismiss Trader', run() { trader = null; traderCooldown = 0; } },
     { label: 'Extend +3 Waves',
       run() { if (trader) trader.wavesLeft += 3; } },
+    { label: () => foodTrader ? `Food Trader: ${foodTrader.wavesLeft}w left` : 'Summon Food Trader',
+      run() {
+        if (!foodTrader) {
+          foodTrader = { wavesLeft: FOOD_TRADER_STAY_WAVES };
+          floaters.push({ x: shop.x + shop.w/2, y: shop.y - 16, text: 'Food Trader summoned', life: 2.0, color: '#ff9bd1' });
+          SFX.unlock();
+        }
+      } },
+    { label: 'Dismiss Food Trader', run() { foodTrader = null; foodTraderCooldown = 0; } },
+    { label: 'Extend Food +3 Waves',
+      run() { if (foodTrader) foodTrader.wavesLeft += 3; } },
   ]},
   { id: 'events', name: 'Arena Events', open: false, items: [
     { label: '+Supply Drop', run() { fireArenaEvent('supplyDrop'); } },
@@ -2676,6 +2763,229 @@ function drawBullet(b) {
     ctx.beginPath(); ctx.arc(b.x, b.y, r * 3, 0, Math.PI*2); ctx.fill();
     ctx.fillStyle = '#fff';
     ctx.beginPath(); ctx.arc(b.x, b.y, r * 0.4, 0, Math.PI*2); ctx.fill();
+    return;
+  }
+  if (b.bulletKind === 'burger') {
+    const ang = Math.atan2(b.vy, b.vx);
+    ctx.save();
+    ctx.translate(b.x, b.y);
+    ctx.rotate(ang);
+    // top bun
+    ctx.fillStyle = '#c47a3a';
+    ctx.beginPath(); ctx.ellipse(0, -3, 8, 3.5, 0, Math.PI, Math.PI * 2); ctx.fill();
+    // sesame
+    ctx.fillStyle = '#fbe2a0';
+    ctx.beginPath(); ctx.arc(-3, -4, 0.6, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(1,  -5, 0.6, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(4,  -4, 0.6, 0, Math.PI*2); ctx.fill();
+    // patty
+    ctx.fillStyle = '#5a2e18';
+    ctx.fillRect(-7, -0.5, 14, 2);
+    // cheese
+    ctx.fillStyle = '#ffd166';
+    ctx.beginPath();
+    ctx.moveTo(-8, 1.4); ctx.lineTo(8, 1.4); ctx.lineTo(7, 2.4); ctx.lineTo(-7, 2.4);
+    ctx.closePath(); ctx.fill();
+    // bottom bun
+    ctx.fillStyle = '#a4632b';
+    ctx.beginPath(); ctx.ellipse(0, 4, 8, 2.5, 0, 0, Math.PI); ctx.fill();
+    ctx.restore();
+    return;
+  }
+  if (b.bulletKind === 'bagel') {
+    const spin = gameTime * 14 + b.x * 0.05;
+    ctx.save();
+    ctx.translate(b.x, b.y);
+    ctx.rotate(spin);
+    ctx.fillStyle = '#d9a64a';
+    ctx.beginPath(); ctx.arc(0, 0, 7.5, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#0a0e16';
+    ctx.beginPath(); ctx.arc(0, 0, 2.6, 0, Math.PI * 2); ctx.fill();
+    // poppy specks
+    ctx.fillStyle = '#1a1a22';
+    for (let k = 0; k < 6; k++) {
+      const a = (k / 6) * Math.PI * 2;
+      ctx.beginPath(); ctx.arc(Math.cos(a) * 4.6, Math.sin(a) * 4.6, 0.5, 0, Math.PI*2); ctx.fill();
+    }
+    ctx.strokeStyle = '#7a4a18';
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.arc(0, 0, 7.5, 0, Math.PI * 2); ctx.stroke();
+    ctx.restore();
+    return;
+  }
+  if (b.bulletKind === 'donut') {
+    const spin = gameTime * 8 + b.y * 0.08;
+    ctx.save();
+    ctx.translate(b.x, b.y);
+    ctx.rotate(spin);
+    // dough
+    ctx.fillStyle = '#e8b878';
+    ctx.beginPath(); ctx.arc(0, 0, 6.5, 0, Math.PI * 2); ctx.fill();
+    // pink frosting (slightly offset for a "dipped" look)
+    ctx.fillStyle = '#ff9bd1';
+    ctx.beginPath();
+    ctx.arc(0.3, -0.3, 5.8, 0, Math.PI * 2);
+    ctx.fill();
+    // hole
+    ctx.fillStyle = '#0a0e16';
+    ctx.beginPath(); ctx.arc(0, 0, 2, 0, Math.PI * 2); ctx.fill();
+    // sprinkles
+    const cols = ['#ffffff', '#5cd86b', '#52cfff', '#ffd166'];
+    for (let k = 0; k < 5; k++) {
+      const a = (k / 5) * Math.PI * 2 + spin * 0.3;
+      const rr = 4.2;
+      ctx.strokeStyle = cols[k % cols.length];
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.moveTo(Math.cos(a) * rr - 0.6, Math.sin(a) * rr);
+      ctx.lineTo(Math.cos(a) * rr + 0.6, Math.sin(a) * rr);
+      ctx.stroke();
+    }
+    ctx.restore();
+    return;
+  }
+  if (b.bulletKind === 'kebab') {
+    const ang = Math.atan2(b.vy, b.vx);
+    ctx.save();
+    ctx.translate(b.x, b.y);
+    ctx.rotate(ang);
+    // wooden skewer
+    ctx.strokeStyle = '#6a4a22';
+    ctx.lineCap = 'round';
+    ctx.lineWidth = 1.4;
+    ctx.beginPath(); ctx.moveTo(-9, 0); ctx.lineTo(9, 0); ctx.stroke();
+    ctx.lineCap = 'butt';
+    // meat chunks
+    ctx.fillStyle = '#a35a2a';
+    for (let k = -1; k <= 1; k++) {
+      ctx.beginPath(); ctx.arc(k * 4, 0, 2.4, 0, Math.PI * 2); ctx.fill();
+    }
+    // veggie chunk
+    ctx.fillStyle = '#5cd86b';
+    ctx.beginPath(); ctx.arc(2, 0, 1.4, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+    return;
+  }
+  if (b.bulletKind === 'soda') {
+    // fizzy droplet — small light-blue drop with foamy halo
+    const r = 2.5 + Math.sin(gameTime * 20 + b.x * 0.3) * 0.5;
+    const c0 = b.color || '#52cfff';
+    const halo = ctx.createRadialGradient(b.x, b.y, 1, b.x, b.y, r * 2.6);
+    halo.addColorStop(0, c0);
+    halo.addColorStop(1, c0 + '00');
+    ctx.fillStyle = halo;
+    ctx.beginPath(); ctx.arc(b.x, b.y, r * 2.6, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#fbfbff';
+    ctx.beginPath(); ctx.arc(b.x, b.y, r * 0.8, 0, Math.PI*2); ctx.fill();
+    return;
+  }
+  if (b.bulletKind === 'bubble') {
+    // big translucent soap bubble with a shimmer
+    const r = 8 + Math.sin(gameTime * 6 + b.x * 0.1) * 0.6;
+    ctx.save();
+    const c0 = b.color || '#9be0ff';
+    const grad = ctx.createRadialGradient(b.x - r*0.3, b.y - r*0.3, 1, b.x, b.y, r);
+    grad.addColorStop(0, 'rgba(255,255,255,0.85)');
+    grad.addColorStop(0.5, c0 + '88');
+    grad.addColorStop(1, c0 + '22');
+    ctx.fillStyle = grad;
+    ctx.beginPath(); ctx.arc(b.x, b.y, r, 0, Math.PI*2); ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.6)';
+    ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.arc(b.x, b.y, r, 0, Math.PI*2); ctx.stroke();
+    // little rainbow shimmer
+    ctx.strokeStyle = 'rgba(255, 200, 255, 0.7)';
+    ctx.lineWidth = 0.8;
+    ctx.beginPath();
+    ctx.arc(b.x - r*0.3, b.y - r*0.3, r * 0.35, 0.6, 1.8);
+    ctx.stroke();
+    ctx.restore();
+    return;
+  }
+  if (b.bulletKind === 'harpoon') {
+    const ang = Math.atan2(b.vy, b.vx);
+    ctx.save();
+    ctx.translate(b.x, b.y);
+    ctx.rotate(ang);
+    // shaft
+    ctx.strokeStyle = '#a0a8b8';
+    ctx.lineCap = 'round';
+    ctx.lineWidth = 2.4;
+    ctx.beginPath(); ctx.moveTo(-12, 0); ctx.lineTo(8, 0); ctx.stroke();
+    // head triangle
+    ctx.fillStyle = '#e8eef6';
+    ctx.beginPath();
+    ctx.moveTo(8, 0); ctx.lineTo(2, -3.4); ctx.lineTo(2, 3.4);
+    ctx.closePath(); ctx.fill();
+    // barb hooks
+    ctx.strokeStyle = '#7c8494';
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.moveTo(2, -3.4); ctx.lineTo(-1, -5);
+    ctx.moveTo(2,  3.4); ctx.lineTo(-1,  5);
+    ctx.stroke();
+    // tail fletching
+    ctx.fillStyle = '#cf3030';
+    ctx.beginPath();
+    ctx.moveTo(-12, 0); ctx.lineTo(-15, -2.4); ctx.lineTo(-13, 0); ctx.lineTo(-15, 2.4);
+    ctx.closePath(); ctx.fill();
+    ctx.lineCap = 'butt';
+    ctx.restore();
+    return;
+  }
+  if (b.bulletKind === 'disco') {
+    // strobing facet ball — flickers through saturated hues
+    const t = gameTime * 14;
+    const hue = (t * 60) % 360;
+    const r = 6.5;
+    // outer glow
+    const glow = ctx.createRadialGradient(b.x, b.y, 1, b.x, b.y, r * 2.4);
+    glow.addColorStop(0, `hsla(${hue}, 100%, 75%, 0.9)`);
+    glow.addColorStop(1, `hsla(${hue}, 100%, 60%, 0)`);
+    ctx.fillStyle = glow;
+    ctx.beginPath(); ctx.arc(b.x, b.y, r * 2.4, 0, Math.PI*2); ctx.fill();
+    // ball
+    ctx.fillStyle = '#3a3a44';
+    ctx.beginPath(); ctx.arc(b.x, b.y, r, 0, Math.PI*2); ctx.fill();
+    // mirror tiles — a 3x3 grid of bright squares whose hue shifts each frame
+    for (let gx = -1; gx <= 1; gx++) {
+      for (let gy = -1; gy <= 1; gy++) {
+        const h = (hue + (gx + 1) * 40 + (gy + 1) * 70) % 360;
+        ctx.fillStyle = `hsl(${h}, 95%, 65%)`;
+        ctx.fillRect(b.x + gx * 2.5 - 1, b.y + gy * 2.5 - 1, 2, 2);
+      }
+    }
+    return;
+  }
+  if (b.bulletKind === 'boomerang') {
+    const spin = gameTime * 18 + b.x * 0.04;
+    ctx.save();
+    ctx.translate(b.x, b.y);
+    ctx.rotate(spin);
+    ctx.fillStyle = b.color || '#d8a060';
+    ctx.beginPath();
+    ctx.moveTo(-8, 0); ctx.lineTo(-2, -2); ctx.lineTo(2, -8); ctx.lineTo(4, -2);
+    ctx.lineTo(8, 0); ctx.lineTo(4, 2); ctx.lineTo(2, 8); ctx.lineTo(-2, 2);
+    ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = '#7a4a18';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.restore();
+    return;
+  }
+  if (b.bulletKind === 'dust') {
+    // swirling brown debris speck
+    const ang = Math.atan2(b.vy, b.vx) + Math.sin(gameTime * 22 + b.x * 0.4) * 0.6;
+    ctx.save();
+    ctx.translate(b.x, b.y);
+    ctx.rotate(ang);
+    ctx.fillStyle = b.color || '#cfa84c';
+    ctx.beginPath();
+    ctx.ellipse(0, 0, 4, 1.6, 0, 0, Math.PI*2);
+    ctx.fill();
+    ctx.fillStyle = '#8a6a28';
+    ctx.beginPath(); ctx.arc(-1, 0, 0.9, 0, Math.PI*2); ctx.fill();
+    ctx.restore();
     return;
   }
   // default — plain circle (explosive rockets render larger)
@@ -3977,23 +4287,39 @@ function processTraderForWaveEnd() {
       traderCooldown = TRADER_COOLDOWN_WAVES;
       floaters.push({ x: cx, y: cy, text: 'Trader has left', life: 3.0, color: '#c47eff' });
     }
-    return;
-  }
-  // No trader currently — try to summon one.
-  if (traderCooldown > 0) {
+  } else if (traderCooldown > 0) {
     traderCooldown -= 1;
-    return;
-  }
-  if (Math.random() < TRADER_ARRIVAL_CHANCE) {
+  } else if (Math.random() < TRADER_ARRIVAL_CHANCE) {
     trader = { wavesLeft: TRADER_STAY_WAVES };
     floaters.push({ x: cx, y: cy, text: 'A Trader has arrived!', life: 3.5, color: '#c47eff' });
     SFX.unlock();
   }
+  // Food Trader follows the same cadence but with its own cooldown / odds.
+  // Floaters use a slightly offset Y so they don't stack on the regular
+  // trader's announcement when both arrive on the same wave end.
+  const fy = cy + 18;
+  if (foodTrader) {
+    foodTrader.wavesLeft -= 1;
+    if (foodTrader.wavesLeft <= 0) {
+      foodTrader = null;
+      foodTraderCooldown = FOOD_TRADER_COOLDOWN_WAVES;
+      floaters.push({ x: cx, y: fy, text: 'Food Trader has left', life: 3.0, color: '#ff9bd1' });
+    }
+  } else if (foodTraderCooldown > 0) {
+    foodTraderCooldown -= 1;
+  } else if (Math.random() < FOOD_TRADER_ARRIVAL_CHANCE) {
+    foodTrader = { wavesLeft: FOOD_TRADER_STAY_WAVES };
+    floaters.push({ x: cx, y: fy, text: 'A Food Trader has arrived!', life: 3.5, color: '#ff9bd1' });
+    SFX.unlock();
+  }
 }
 
-function buyTraderWeapon(id) {
-  if (!trader) return; // safety — should never hit, the tab is hidden
-  const entry = TRADER_STOCK.find(t => t.id === id);
+function buyTraderWeapon(id) { buyFromStock(id, TRADER_STOCK, !!trader); }
+function buyFoodTraderWeapon(id) { buyFromStock(id, FOOD_TRADER_STOCK, !!foodTrader); }
+
+function buyFromStock(id, stock, traderPresent) {
+  if (!traderPresent) return; // safety — should never hit, the tab is hidden
+  const entry = stock.find(t => t.id === id);
   if (!entry || player.money < entry.cost) return;
   if (player.weapon === id) return;
   player.money -= entry.cost;
@@ -4279,6 +4605,8 @@ function tryShootFor(p, baseAng, nowSec) {
       effectDur: w.effectDur || 0,
       effectDps: w.effectDps || 0,
       explodesIntoSauce: !!w.explodesIntoSauce,
+      slowOnHit: w.slowOnHit || 0,
+      stunOnHit: w.stunOnHit || 0,
     });
   }
 }
@@ -6400,6 +6728,15 @@ function updateBullets(dt) {
         }
         // Confetti / Spaghetti: per-bullet status effect from b.effect.
         applyBulletStatus(b, z);
+        // Soda Spritz: brief slow on every hit, stacks via Math.max.
+        if (b.slowOnHit) {
+          z.slowTimer = Math.max(z.slowTimer || 0, b.slowOnHit);
+        }
+        // Disco Ball: brief stun on every contact. Bosses resist (capped).
+        if (b.stunOnHit) {
+          const dur = z.isBoss ? Math.min(b.stunOnHit, 0.25) : b.stunOnHit;
+          z.stunTimer = Math.max(z.stunTimer || 0, dur);
+        }
         // Trainer dummy shows a damage floater so you can read the numbers
         pushDamageFloater(z, dmgApplied, b.isCrit);
         // Tesla: chain to nearby zombies after the direct hit.
@@ -6790,6 +7127,8 @@ function hardReset() {
   activeEvent = null;
   trader = null;
   traderCooldown = 0;
+  foodTrader = null;
+  foodTraderCooldown = 0;
   shopTab = 'upgrades';
   shakeAmt = 0; flashRed = 0; nearbyGun = null;
   player.weapon = 'pistol';
@@ -6983,6 +7322,65 @@ function render() {
     ctx.fillStyle = '#9aa0ab';
     ctx.font = '8px system-ui';
     ctx.fillText(`${trader.wavesLeft}w left`, tx, ty + 24);
+    ctx.textAlign = 'left';
+  }
+  // Food Trader — drawn on the opposite (left) edge of the shop so the two
+  // NPCs don't overlap when both are present. Apron + chef hat read as
+  // "cook" at a glance.
+  if (foodTrader) {
+    const tx = shop.x + 30;
+    const ty = shop.y + 56;
+    const bob = Math.sin(gameTime * 2.6 + 0.5) * 1.6;
+    // pink aura
+    const aura = ctx.createRadialGradient(tx, ty, 4, tx, ty, 28);
+    aura.addColorStop(0, 'rgba(255, 155, 209, 0.38)');
+    aura.addColorStop(1, 'rgba(255, 155, 209, 0)');
+    ctx.fillStyle = aura;
+    ctx.beginPath(); ctx.arc(tx, ty, 28, 0, Math.PI * 2); ctx.fill();
+    // apron body
+    ctx.fillStyle = '#e8e8ec';
+    ctx.beginPath();
+    ctx.moveTo(tx - 11, ty + 12 + bob);
+    ctx.lineTo(tx + 11, ty + 12 + bob);
+    ctx.lineTo(tx + 8, ty - 6 + bob);
+    ctx.lineTo(tx - 8, ty - 6 + bob);
+    ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = '#0a0a14';
+    ctx.lineWidth = 1; ctx.stroke();
+    // apron stripe
+    ctx.fillStyle = '#ff9bd1';
+    ctx.fillRect(tx - 1.6, ty - 5 + bob, 3.2, 17);
+    // head
+    ctx.fillStyle = '#e8d5b0';
+    ctx.beginPath(); ctx.arc(tx, ty - 10 + bob, 5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    // chef hat — wide puffy top, narrow band
+    ctx.fillStyle = '#fbfbff';
+    ctx.beginPath();
+    ctx.ellipse(tx, ty - 19 + bob, 7, 4, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#0a0a14';
+    ctx.stroke();
+    ctx.fillStyle = '#fbfbff';
+    ctx.fillRect(tx - 6, ty - 16 + bob, 12, 3);
+    ctx.strokeRect(tx - 6 + 0.5, ty - 16 + bob + 0.5, 11, 2);
+    // spoon prop
+    ctx.strokeStyle = '#a06a3a';
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.moveTo(tx + 9, ty + 4 + bob); ctx.lineTo(tx + 13, ty - 4 + bob);
+    ctx.stroke();
+    ctx.fillStyle = '#d8c498';
+    ctx.beginPath();
+    ctx.ellipse(tx + 13, ty - 5 + bob, 2.2, 1.4, -0.4, 0, Math.PI * 2);
+    ctx.fill();
+    // label
+    ctx.fillStyle = '#ff9bd1';
+    ctx.font = 'bold 9px system-ui';
+    ctx.textAlign = 'center';
+    ctx.fillText('FOOD TRADER', tx, ty - 26);
+    ctx.fillStyle = '#9aa0ab';
+    ctx.font = '8px system-ui';
+    ctx.fillText(`${foodTrader.wavesLeft}w left`, tx, ty + 24);
     ctx.textAlign = 'left';
   }
 
@@ -8577,24 +8975,32 @@ const TUTORIAL_PAGES = [
     title: 'Trader Weapons',
     accent: '#c47eff',
     sections: [
-      { heading: 'The Trader', lines: [
-        'A traveling trader visits the shop sometimes',
-        'Stays for 3 waves — see the wave counter on their tab',
-        'Sells 6 gag weapons sold NOWHERE else',
-        'Trader weapons vanish on swap · can\'t be re-collected',
+      { heading: 'Two Traders', lines: [
+        'Regular Trader (purple) — stays 3 waves · non-food gags',
+        'Food Trader (pink) — stays 5 waves · spawns more often',
+        'Both can be in the shop at once · own tabs in shop UI',
+        'All trader weapons vanish on swap (never re-collectable)',
       ] },
-      { heading: 'Unique Mechanics', lines: [
-        'Fish Slap — massive KNOCKBACK · launches zombies away',
-        'Pizza Cutter — re-hits the same zombie · saws crowds',
-        'Toaster Cannon — huge blast + 6 toast shrapnel',
+      { heading: 'Regular Trader Gags', lines: [
         'Confetti Bomb — each streamer = random status effect',
-        'Lawnmower — leaves a damaging clipping field on the ground',
-        'Spaghetti Beam — sustained LASER · sauce splat on kill',
+        'Lawnmower — leaves a damaging clipping field',
+        'Bubble Blaster — soapy AoE + huge knockback',
+        'Harpoon Cannon — heavy iron spear · pierces 6',
+        'Disco Ball — bounces and STUNS on every contact',
+        'Boomerang — pierces and re-hits as it spins',
+        'Reverse Vacuum — pulls zombies IN (negative knock)',
+      ] },
+      { heading: 'Food Trader Gags', lines: [
+        'Burger Blaster — mustard-splash AoE',
+        'Bagel Cutter — pierces cleanly through groups',
+        'Donut Driller — sticky pink sprinkle drillers',
+        'Kebab Skewer — heavy single piercing skewer',
+        'Soda Spritz — cone of fizz · briefly SLOWS targets',
+        'PLUS all the original food weapons (fish/pizza/...)',
       ] },
       { heading: 'Confetti Color Key', lines: [
-        'Red = burn (damage over time)',
-        'Blue = slow · Yellow = stun · Green = poison',
-        'Pink = knockback',
+        'Red = burn  ·  Blue = slow  ·  Yellow = stun',
+        'Green = poison  ·  Pink = knockback',
       ] },
     ],
   },
@@ -8642,10 +9048,11 @@ const TUTORIAL_PAGES = [
         'Manual mouse fire still works on top of it',
         'Pairs well with melee-focused secondary play',
       ] },
-      { heading: 'The Trader', lines: [
-        'Sometimes arrives in the shop for 3 waves',
-        'Sells 6 exclusive gag weapons not sold elsewhere',
-        'High prices · weapons vanish when swapped away',
+      { heading: 'The Traders', lines: [
+        'Regular Trader (purple) — non-food gags · stays 3w',
+        'Food Trader (pink) — food gags · stays 5w · more often',
+        'Both can be present together · each has its own tab',
+        'All trader weapons vanish on swap (never re-collected)',
       ] },
     ],
   },
@@ -11165,6 +11572,7 @@ function drawShop() {
               : shopTab === 'storage' ? '#ffd166'
               : shopTab === 'pets'    ? '#80ffe0'
               : shopTab === 'trader'  ? '#c47eff'
+              : shopTab === 'foodtrader' ? '#ff9bd1'
               : '#5a87c4';
   ctx.fillStyle = 'rgba(8, 10, 16, 0.94)';
   ctx.fillRect(x, y, w, h);
@@ -11188,9 +11596,11 @@ function drawShop() {
   // Trader tab appears only while the trader is in town. Shows the waves
   // remaining as a soft countdown right in the label.
   if (trader) tabs.push({ id: 'trader', label: `Trader · ${trader.wavesLeft}w`, color: '#c47eff' });
+  if (foodTrader) tabs.push({ id: 'foodtrader', label: `Food · ${foodTrader.wavesLeft}w`, color: '#ff9bd1' });
   tabs.push({ id: 'storage', label: `Storage${storage.length ? ' · ' + storage.length : ''}`, color: '#ffd166' });
   // If the active tab became invalid (e.g., trader left), fall back to upgrades.
   if (shopTab === 'trader' && !trader) shopTab = 'upgrades';
+  if (shopTab === 'foodtrader' && !foodTrader) shopTab = 'upgrades';
   const tabY = y + 56;
   const tabH = 26;
   const tabW = (w - 28 - (tabs.length - 1) * 6) / tabs.length;
@@ -11374,6 +11784,17 @@ function drawShop() {
     // Reuse drawArsenalList's row layout, but route through the trader's
     // stock list (with the trader's accent color rather than red).
     ly = drawTraderList(bodyX, ly, bodyW, sy, clipY, clipH);
+    contentBottom = ly;
+  } else if (shopTab === 'foodtrader' && foodTrader) {
+    ctx.fillStyle = '#9aa0ab';
+    ctx.font = '10px system-ui';
+    ctx.fillText(`leaves in ${foodTrader.wavesLeft} wave${foodTrader.wavesLeft === 1 ? '' : 's'} · cheaper food-themed gags`, bodyX, bodyY);
+    let ly = bodyY + 16;
+    ctx.fillStyle = '#ff9bd1';
+    ctx.font = 'bold 11px system-ui';
+    ctx.fillText('FOOD WEAPONS', bodyX, ly);
+    ly += 12;
+    ly = drawFoodTraderList(bodyX, ly, bodyW, sy, clipY, clipH);
     contentBottom = ly;
   } else if (shopTab === 'storage') {
     ctx.fillStyle = '#9aa0ab';
@@ -11560,10 +11981,17 @@ function drawArsenalList(x, y, w, entries, kind, sy, clipY, clipH) {
 // Trader-stock list — same row layout as the Arsenal but accented purple
 // to flag the temporary, exclusive nature of the inventory.
 function drawTraderList(x, y, w, sy, clipY, clipH) {
+  return drawStockList(x, y, w, sy, clipY, clipH, TRADER_STOCK, '#c47eff', 'rgba(196, 126, 255, 0.14)', buyTraderWeapon);
+}
+function drawFoodTraderList(x, y, w, sy, clipY, clipH) {
+  return drawStockList(x, y, w, sy, clipY, clipH, FOOD_TRADER_STOCK, '#ff9bd1', 'rgba(255, 155, 209, 0.14)', buyFoodTraderWeapon);
+}
+
+function drawStockList(x, y, w, sy, clipY, clipH, stock, accent, hoverBg, buyFn) {
   const rowH = 44;
   const iconCol = 40;
   let ly = y;
-  for (const entry of TRADER_STOCK) {
+  for (const entry of stock) {
     const def = WEAPONS[entry.id];
     if (!def) continue;
     const equipped = player.weapon === entry.id;
@@ -11572,9 +12000,9 @@ function drawTraderList(x, y, w, sy, clipY, clipH) {
     const screenY = ly - sy;
     const visible = screenY + rowH > clipY && screenY < clipY + clipH;
     const hover = can && visible && pointInRect(mouse, { x, y: screenY, w, h: rowH });
-    ctx.fillStyle = hover ? 'rgba(196, 126, 255, 0.14)' : 'rgba(20, 22, 30, 0.5)';
+    ctx.fillStyle = hover ? hoverBg : 'rgba(20, 22, 30, 0.5)';
     ctx.fillRect(rowRect.x, rowRect.y, rowRect.w, rowRect.h);
-    ctx.fillStyle = '#c47eff';
+    ctx.fillStyle = accent;
     ctx.fillRect(rowRect.x, rowRect.y, 2, rowRect.h);
     const iconX = rowRect.x + 4;
     const iconY = rowRect.y + 2;
@@ -11610,7 +12038,7 @@ function drawTraderList(x, y, w, sy, clipY, clipH) {
     ctx.textAlign = 'left';
     if (can) {
       const id = entry.id;
-      shopBuyRects.push({ rect: rowRect, action: () => buyTraderWeapon(id) });
+      shopBuyRects.push({ rect: rowRect, action: () => buyFn(id) });
     }
     ly += rowH;
   }
