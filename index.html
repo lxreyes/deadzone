@@ -1747,23 +1747,37 @@ function drawBullet(b) {
     return;
   }
   if (b.bulletKind === 'banana') {
+    // Classic crescent banana with tapered tips, dark stem at one end and a
+    // lighter fruit-flesh highlight along the inside of the curve.
     const ang = Math.atan2(b.vy, b.vx);
     ctx.save();
     ctx.translate(b.x, b.y);
     ctx.rotate(ang);
+    // Outline path: long crescent
     ctx.fillStyle = '#ffd942';
     ctx.beginPath();
-    ctx.moveTo(-6, 3);
-    ctx.quadraticCurveTo(0, -6, 7, -1);
-    ctx.quadraticCurveTo(8, 2, 6, 3);
-    ctx.quadraticCurveTo(0, -2, -5, 5);
+    ctx.moveTo(-8, 4);                       // bottom-left tail
+    ctx.quadraticCurveTo(-2, -7, 8, -3);    // top arc to right tip
+    ctx.quadraticCurveTo(11, -2, 11, 0);    // right tip
+    ctx.quadraticCurveTo(11, 1, 8, 1);      // bottom of right tip
+    ctx.quadraticCurveTo(0, -1, -7, 5);     // bottom arc back
+    ctx.quadraticCurveTo(-9, 5, -8, 4);     // left tail
     ctx.closePath();
     ctx.fill();
     ctx.strokeStyle = '#a07e1c';
     ctx.lineWidth = 1;
     ctx.stroke();
-    ctx.fillStyle = '#6a4a0a';
-    ctx.fillRect(6, -2, 2.5, 2.5);
+    // Lighter belly highlight (the inside of the curve)
+    ctx.fillStyle = '#fff2a0';
+    ctx.beginPath();
+    ctx.moveTo(-5, 3);
+    ctx.quadraticCurveTo(0, -3.5, 6, -1.5);
+    ctx.quadraticCurveTo(0, -1, -5, 3);
+    ctx.closePath();
+    ctx.fill();
+    // Dark stem at the right tip
+    ctx.fillStyle = '#4a3a18';
+    ctx.fillRect(10, -1.6, 3, 1.4);
     ctx.restore();
     return;
   }
@@ -1982,24 +1996,40 @@ function drawBullet(b) {
     return;
   }
   if (b.bulletKind === 'noodle') {
-    // wavy spaghetti strand — a sine-curved line, no rigid shape
+    // Bundle of three wavy spaghetti strands — each offset on the Y axis and
+    // out of phase with the others, so the shape reads as a clump of noodles
+    // rather than a single banana-shaped curve. A small tomato-sauce splat
+    // sits at the head where it pierces.
     const ang = Math.atan2(b.vy, b.vx);
     ctx.save();
     ctx.translate(b.x, b.y);
     ctx.rotate(ang);
-    ctx.strokeStyle = b.color || '#ffd166';
-    ctx.lineWidth = 2.2;
-    ctx.beginPath();
-    const len = 14;
-    for (let k = -len; k <= len; k += 2) {
-      const yy = Math.sin((k + gameTime * 12) * 0.45) * 1.6;
-      if (k === -len) ctx.moveTo(k, yy);
-      else            ctx.lineTo(k, yy);
+    const len = 16;
+    const strands = [
+      { y: -3, color: '#ffd166', phase: 0.0 },
+      { y:  0, color: '#ffe089', phase: 1.4 },
+      { y:  3, color: '#ffd166', phase: 2.8 },
+    ];
+    ctx.lineWidth = 1.8;
+    ctx.lineCap = 'round';
+    for (const s of strands) {
+      ctx.strokeStyle = s.color;
+      ctx.beginPath();
+      for (let k = -len; k <= len; k += 2) {
+        const yy = s.y + Math.sin((k + gameTime * 14) * 0.5 + s.phase) * 1.6;
+        if (k === -len) ctx.moveTo(k, yy);
+        else            ctx.lineTo(k, yy);
+      }
+      ctx.stroke();
     }
-    ctx.stroke();
-    // tomato dot at the head
+    ctx.lineCap = 'butt';
+    // tomato-sauce splat at the tip (a small irregular blob, not a circle)
     ctx.fillStyle = '#d63030';
-    ctx.beginPath(); ctx.arc(len - 1, 0, 1.6, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath();
+    ctx.arc(len + 1, -1, 2.2, 0, Math.PI * 2);
+    ctx.arc(len + 2, 1, 1.5, 0, Math.PI * 2);
+    ctx.arc(len - 1, 2, 1.2, 0, Math.PI * 2);
+    ctx.fill();
     ctx.restore();
     return;
   }
