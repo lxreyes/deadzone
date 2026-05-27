@@ -1505,6 +1505,12 @@ const CHEAT_CODE = '1234';
 let cheatsUnlocked = false;
 let cheatBuffer = '';
 let cheatsOpen = false;
+// "Are you sure?" confirmation shown when the player presses R (hard reset).
+// Reset is committed only after explicit Yes click / Enter / Y; cancelled by
+// No click / Escape / N. Hit-test rects populated by drawResetConfirm.
+let resetConfirm = false;
+let resetConfirmYesRect = null;
+let resetConfirmNoRect = null;
 let godMode    = false;
 let cheatsHeaderRect = null;
 // Panel position is mutable now — the user can drag the header to move it.
@@ -2851,6 +2857,7 @@ addEventListener('keydown', e => {
   }
   // Escape switches game-state — checked before recording the key
   if (e.code === 'Escape') {
+    if (resetConfirm)                  { resetConfirm = false; SFX.uiClick(); return; }
     if (buildMode)                     { buildMode = false; SFX.uiClick(); return; }
     if (gameState === 'playing')       { gameState = 'paused'; clearKeys(); SFX.uiClick(); updateMusicForState(); return; }
     if (gameState === 'paused')        { gameState = 'playing'; SFX.uiClick(); updateMusicForState(); return; }
@@ -2869,7 +2876,18 @@ addEventListener('keydown', e => {
   if (gameState !== 'playing') return;
 
   keys[e.code] = true;
-  if (e.code === 'KeyR') hardReset();
+  if (e.code === 'KeyR') resetConfirm = true;
+  // Enter / Y confirms a pending reset; Escape / N cancels
+  if (resetConfirm) {
+    if (e.code === 'Enter' || e.code === 'KeyY') {
+      resetConfirm = false;
+      hardReset();
+      SFX.uiClick && SFX.uiClick();
+    } else if (e.code === 'Escape' || e.code === 'KeyN') {
+      resetConfirm = false;
+      SFX.uiClick && SFX.uiClick();
+    }
+  }
   if (e.code === 'KeyB' && !pendingCards) {
     buildMode = !buildMode;
     SFX.uiClick();
@@ -3072,6 +3090,28 @@ c.addEventListener('mousedown', e => {
   // bottom-left and easily overlaps).
   const shopUIRect = { x: 18, y: H - 540 - 18, w: 360, h: 540 };
   const clickInShopUI = inShop() && pointInRect(mouse, shopUIRect);
+  // Pause button (top-right corner) — pauses immediately when clicked
+  if (pauseBtnRect && pointInRect(mouse, pauseBtnRect) && gameState === 'playing') {
+    gameState = 'paused';
+    clearKeys();
+    SFX.uiClick && SFX.uiClick();
+    updateMusicForState && updateMusicForState();
+    return;
+  }
+  // "Are you sure?" reset confirmation is modal — eat the click whether
+  // it lands on a button or anywhere else (anywhere else = treat as cancel
+  // so a stray click can't accidentally reset the run).
+  if (resetConfirm) {
+    if (resetConfirmYesRect && pointInRect(mouse, resetConfirmYesRect)) {
+      resetConfirm = false;
+      hardReset();
+      SFX.uiClick && SFX.uiClick();
+    } else {
+      resetConfirm = false;
+      SFX.uiClick && SFX.uiClick();
+    }
+    return;
+  }
   // Guided-tutorial Skip button takes priority over everything else when
   // active — lets the user bail out without clicking through menus.
   if (guidedActive && guidedSkipRect && pointInRect(mouse, guidedSkipRect)) {
@@ -7980,6 +8020,7 @@ function render() {
   drawStats();
   drawWaveBanner();
   drawGuidedTutorialBanner();
+  drawPauseButton();
   drawCheats();
   if (nearbyGun && nearbyGun.weapon !== player.weapon) drawSwapPrompt();
   if (nearbyBladeCrate && nearbyBladeCrate.secondary !== player.secondary) drawBladeSwapPrompt();
@@ -11499,6 +11540,7 @@ function tick() {
   }
   // Always draw the error overlay last so it's visible regardless of
   // which game state we're in (menu, paused, playing, tutorial).
+  drawResetConfirm();
   drawErrorOverlay();
   requestAnimationFrame(tick);
 }
@@ -11554,6 +11596,91 @@ function copyErrors() {
 
 // In-canvas error panel — shows the most recent errors with their first
 // few stack frames so the player can read them without DevTools.
+// Pause button in the top-right corner of the canvas — always visible
+// while the player is in-game. Touch users get the larger ☰ DOM button
+// instead (setupTouch hides this one).
+let pauseBtnRect = null;
+function drawPauseButton() {
+  if (gameState !== 'playing') { pauseBtnRect = null; return; }
+  if (isTouch) { pauseBtnRect = null; return; }
+  const w = 36, h = 30;
+  const x = W - w - 12, y = 14;
+  pauseBtnRect = { x, y, w, h };
+  const hover = pointInRect(mouse, pauseBtnRect);
+  ctx.fillStyle = hover ? 'rgba(40, 50, 70, 0.92)' : 'rgba(10, 12, 18, 0.78)';
+  ctx.fillRect(x, y, w, h);
+  ctx.strokeStyle = hover ? '#7ec8ff' : '#33363f';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+  // Two vertical bars (pause glyph)
+  ctx.fillStyle = hover ? '#fff' : '#cfd3da';
+  ctx.fillRect(x + 11, y + 7, 4, 16);
+  ctx.fillRect(x + 21, y + 7, 4, 16);
+}
+
+// "Are you sure?" reset confirmation. Drawn over the top of everything when
+// resetConfirm is set; cleared by the keydown handler (Enter/Y/Escape/N) or
+// by the Yes/No buttons here (hit-tested in the mousedown handler).
+function drawResetConfirm() {
+  if (!resetConfirm) return;
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalAlpha = 1;
+  // Dim backdrop
+  ctx.fillStyle = 'rgba(6, 8, 12, 0.72)';
+  ctx.fillRect(0, 0, W, H);
+  // Panel
+  const w = 480, h = 200;
+  const x = (W - w) / 2, y = (H - h) / 2;
+  ctx.fillStyle = '#13151c';
+  ctx.fillRect(x, y, w, h);
+  ctx.strokeStyle = '#d63030';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+  // Left accent stripe
+  ctx.fillStyle = '#d63030';
+  ctx.fillRect(x, y, 4, h);
+  // Title
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 22px system-ui';
+  ctx.textAlign = 'center';
+  ctx.fillText('Hard Reset?', W / 2, y + 42);
+  // Body
+  ctx.fillStyle = '#cfd3da';
+  ctx.font = '13px system-ui';
+  ctx.fillText('This wipes your money, weapons, perks, EXP,', W / 2, y + 78);
+  ctx.fillText('pets, abilities, and the current run.', W / 2, y + 98);
+  ctx.fillStyle = '#9aa0ab';
+  ctx.font = '11px system-ui';
+  ctx.fillText('Enter / Y to confirm · Escape / N to cancel', W / 2, y + 124);
+  // Buttons
+  const bw = 150, bh = 44, by = y + h - bh - 18, gap = 24;
+  resetConfirmNoRect  = { x: (W - bw * 2 - gap) / 2,           y: by, w: bw, h: bh };
+  resetConfirmYesRect = { x: (W - bw * 2 - gap) / 2 + bw + gap, y: by, w: bw, h: bh };
+  // No (cancel)
+  const noHover = pointInRect(mouse, resetConfirmNoRect);
+  ctx.fillStyle = noHover ? '#1c2030' : '#11141c';
+  ctx.fillRect(resetConfirmNoRect.x, resetConfirmNoRect.y, bw, bh);
+  ctx.strokeStyle = noHover ? '#7ec8ff' : '#33363f';
+  ctx.lineWidth = noHover ? 2 : 1;
+  ctx.strokeRect(resetConfirmNoRect.x + 0.5, resetConfirmNoRect.y + 0.5, bw - 1, bh - 1);
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 14px system-ui';
+  ctx.fillText('Cancel', resetConfirmNoRect.x + bw / 2, by + 28);
+  // Yes (destructive)
+  const yesHover = pointInRect(mouse, resetConfirmYesRect);
+  ctx.fillStyle = yesHover ? '#3a1a1a' : '#1a0e0e';
+  ctx.fillRect(resetConfirmYesRect.x, resetConfirmYesRect.y, bw, bh);
+  ctx.strokeStyle = yesHover ? '#ff5050' : '#d63030';
+  ctx.lineWidth = yesHover ? 2 : 1;
+  ctx.strokeRect(resetConfirmYesRect.x + 0.5, resetConfirmYesRect.y + 0.5, bw - 1, bh - 1);
+  ctx.fillStyle = '#ff8a8a';
+  ctx.font = 'bold 14px system-ui';
+  ctx.fillText('Reset Run', resetConfirmYesRect.x + bw / 2, by + 28);
+  ctx.textAlign = 'left';
+  ctx.restore();
+}
+
 function drawErrorOverlay() {
   if (recentErrors.length === 0) return;
   ctx.save();
