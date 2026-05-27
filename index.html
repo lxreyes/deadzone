@@ -1328,7 +1328,7 @@ let buildToolbarRects = null; // populated each frame by drawBuildToolbar
 // Cheats organized into collapsible subsections. Each section has its own
 // open/closed flag so the player can hide groups they're not using.
 const cheatSections = [
-  { id: 'player', name: 'Player', open: true, items: [
+  { id: 'player', name: 'Player', open: false, items: [
     { label: 'Full Heal', run() { player.hp = player.maxHp; } },
     { label: 'Max Upgrades', run() {
         for (const u of upgrades) if (u.type === 'perm') u.buy();
@@ -1336,7 +1336,7 @@ const cheatSections = [
       } },
     { label: 'God Mode', toggle: () => godMode, run() { godMode = !godMode; } },
   ]},
-  { id: 'waves', name: 'Waves & Bosses', open: true, items: [
+  { id: 'waves', name: 'Waves & Bosses', open: false, items: [
     { label: '+5 Waves', run() {
         zombies.length = 0; bullets.length = 0;
         wave = wave + 4;
