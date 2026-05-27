@@ -2210,6 +2210,20 @@ function spawnSpecific(type) {
 // stacks via the same apply() the post-wave card draw uses, costing a flat
 // EXP price per buy.
 const TOMES_SHOP_COST = 25;
+// Perks sorted into role-based sections so the shop reads cleanly.
+const SHOP_SECTIONS = [
+  { id: 'offense',  name: 'Offense',  color: '#ff5050',
+    ids: ['heavyCal', 'crit', 'critBurst', 'multishot', 'bossSlayer', 'eagleEye', 'mightyBoom', 'slow', 'glass', 'berserk'] },
+  { id: 'defense',  name: 'Defense',  color: '#5cd86b',
+    ids: ['ironSkin', 'lastStand', 'thorns', 'soulSteal', 'battleCry', 'sturdyWalls'] },
+  { id: 'sustain',  name: 'Sustain',  color: '#c47eff',
+    ids: ['regen', 'lifesteal', 'vampire', 'juggernaut', 'waveCrush'] },
+  { id: 'mobility', name: 'Mobility', color: '#5cffec',
+    ids: ['quickstep', 'adrenaline', 'mightyThrow'] },
+  { id: 'economy',  name: 'Economy',  color: '#ffce44',
+    ids: ['greed', 'magnet', 'luckyFind'] },
+];
+let tomeShopSection = 'offense';
 function buyShopPerk(id) {
   const def = SPECIAL_UPGRADES[id];
   if (!def) return;
@@ -5094,7 +5108,7 @@ function drawUpgradeTree() {
   ctx.fillStyle = '#fff';
   ctx.font = 'bold 28px system-ui';
   ctx.textAlign = 'center';
-  ctx.fillText(treeView === 'roots' ? 'THE TREE OF UPGRADE' : 'TOMES SHOP', W / 2, 48);
+  ctx.fillText(treeView === 'roots' ? 'THE TREE OF UPGRADES' : 'TOMES SHOP', W / 2, 48);
   ctx.fillStyle = '#7ec8ff';
   ctx.font = 'bold 18px system-ui';
   ctx.fillText(`${player.exp} EXP`, W / 2, 72);
@@ -5102,8 +5116,8 @@ function drawUpgradeTree() {
   // Tab switcher — Tomes Shop / Root System
   const tabW = 170, tabH = 30, tabGap = 8;
   const tabs = [
-    { id: 'tab-tomes', label: 'Tomes Shop',         view: 'tomes' },
-    { id: 'tab-roots', label: 'The Tree of Upgrade', view: 'roots' },
+    { id: 'tab-tomes', label: 'Tomes Shop',           view: 'tomes' },
+    { id: 'tab-roots', label: 'The Tree of Upgrades', view: 'roots' },
   ];
   const totalTabW = tabs.length * tabW + (tabs.length - 1) * tabGap;
   let tx = (W - totalTabW) / 2;
@@ -5127,22 +5141,46 @@ function drawUpgradeTree() {
   // Dispatch to the selected view
   if (treeView === 'roots') { drawRootTreeContent(); return; }
 
-  // ---- TOMES SHOP body — every SPECIAL_UPGRADES entry as a buyable card ----
+  // ---- TOMES SHOP body — perks sorted into role sections ----
   ctx.fillStyle = '#9aa0ab';
   ctx.font = '13px system-ui';
   ctx.textAlign = 'center';
-  ctx.fillText(`each tome costs ${TOMES_SHOP_COST} EXP · picks stack`, W / 2, 142);
+  ctx.fillText(`each tome costs ${TOMES_SHOP_COST} EXP · picks stack`, W / 2, 138);
 
-  const allIds = Object.keys(SPECIAL_UPGRADES);
+  // Section pills — click to switch which group of tomes is shown
+  const pillW = 130, pillH = 26, pillGap = 8;
+  const pillsTotalW = SHOP_SECTIONS.length * pillW + (SHOP_SECTIONS.length - 1) * pillGap;
+  let px = (W - pillsTotalW) / 2;
+  for (const sec of SHOP_SECTIONS) {
+    const rect = { x: px, y: 152, w: pillW, h: pillH, id: 'sec-' + sec.id };
+    const active = tomeShopSection === sec.id;
+    const hover = pointInRect(mouse, rect);
+    ctx.fillStyle = active ? '#1a3a5a' : (hover ? '#1c2030' : '#13151c');
+    ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+    ctx.strokeStyle = active ? sec.color : '#33363f';
+    ctx.lineWidth = active ? 2 : 1;
+    ctx.strokeRect(rect.x, rect.y, rect.w, rect.h);
+    // colored dot indicating the section
+    ctx.fillStyle = sec.color;
+    ctx.beginPath(); ctx.arc(rect.x + 12, rect.y + rect.h / 2, 4, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#fff';
+    fitFont(`${sec.name} (${sec.ids.length})`, rect.w - 30, 'bold 12px system-ui', 9);
+    ctx.textAlign = 'left';
+    ctx.fillText(`${sec.name} (${sec.ids.length})`, rect.x + 22, rect.y + 17);
+    menuButtons.push(rect);
+    px += pillW + pillGap;
+  }
+
+  const section = SHOP_SECTIONS.find(s => s.id === tomeShopSection) || SHOP_SECTIONS[0];
+  const ids = section.ids;
   const cols = 4;
-  const rows = Math.ceil(allIds.length / cols);
   const cardW = 220, cardH = 60, cgap = 10;
   const gridW = cols * cardW + (cols - 1) * cgap;
   const gridX = (W - gridW) / 2;
-  const gridY = 162;
+  const gridY = 192;
 
-  for (let i = 0; i < allIds.length; i++) {
-    const id = allIds[i];
+  for (let i = 0; i < ids.length; i++) {
+    const id = ids[i];
     const def = SPECIAL_UPGRADES[id];
     const col = i % cols, row = Math.floor(i / cols);
     const rx = gridX + col * (cardW + cgap);
@@ -5395,6 +5433,8 @@ function handleMenuAction(id) {
         buyShopPerk(id.slice('shop-'.length));
       } else if (id && id.startsWith('root-')) {
         buyRootNode(id.slice('root-'.length));
+      } else if (id && id.startsWith('sec-')) {
+        tomeShopSection = id.slice('sec-'.length);
       }
       break;
   }
