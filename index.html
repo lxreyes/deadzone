@@ -4102,8 +4102,20 @@ function tryAbility(id) {
   if (gameTime - last < cd) return;
   player.abilityLast[id] = gameTime;
   if (id === 'dash') {
-    // Quick teleport in the aim direction with brief invulnerability.
-    const ang = Math.atan2(mouse.y - player.y, mouse.x - player.x);
+    // Dash in the current MOVEMENT direction (WASD/arrows). If the player
+    // is standing still, fall back to the aim direction so the ability is
+    // never useless.
+    let mdx = 0, mdy = 0;
+    if (keys['KeyW'] || keys['ArrowUp'])    mdy -= 1;
+    if (keys['KeyS'] || keys['ArrowDown'])  mdy += 1;
+    if (keys['KeyA'] || keys['ArrowLeft'])  mdx -= 1;
+    if (keys['KeyD'] || keys['ArrowRight']) mdx += 1;
+    let ang;
+    if (mdx !== 0 || mdy !== 0) {
+      ang = Math.atan2(mdy, mdx);
+    } else {
+      ang = Math.atan2(mouse.y - player.y, mouse.x - player.x);
+    }
     const oldX = player.x, oldY = player.y;
     const tx = player.x + Math.cos(ang) * player.dashDistance;
     const ty = player.y + Math.sin(ang) * player.dashDistance;
