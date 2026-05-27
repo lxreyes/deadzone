@@ -8534,10 +8534,12 @@ function drawSettingsMenu() {
   ctx.fillText('Settings', W / 2, 110);
   ctx.fillStyle = '#9aa0ab';
   ctx.font = '13px system-ui';
-  ctx.fillText('audio + sprite editor', W / 2, 134);
+  ctx.fillText('audio · co-op · sprite editor', W / 2, 134);
 
-  const bw = 400, bh = 60, gap = 14;
-  let by = 180;
+  // Settings has more rows now (Co-op + Auto-Shoot on top of the originals)
+  // so the layout uses tighter gaps + shorter toggle rows than the main menu.
+  const bw = 400, bh = 54, gap = 8;
+  let by = 162;
   menuButtons = [];
 
   // Mute toggle as a button-like row
