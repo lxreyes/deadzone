@@ -1268,19 +1268,38 @@ const cheatSections = [
         const a = Math.random() * Math.PI * 2;
         spawnPickupAt(player.x + Math.cos(a) * 50, player.y + Math.sin(a) * 50, type);
       } },
-    { label: () => `Gun: ${WEAPONS[player.weapon].name}`,
-      run() {
-        const ks = Object.keys(WEAPONS);
-        const i = ks.indexOf(player.weapon);
-        player.weapon = ks[(i + 1) % ks.length];
-      } },
-    { label: () => `Utility: ${player.secondary ? SECONDARIES[player.secondary].name : 'None'}`,
-      run() {
-        const ks = [null, ...SECONDARY_KEYS];
-        const i = ks.indexOf(player.secondary);
-        player.secondary = ks[(i + 1) % ks.length];
-      } },
+    { label: 'Default Pistol', run() { player.weapon = 'pistol'; } },
   ]},
+  // ---- Per-category weapon equip — each section is independently
+  // collapsible so the cheats panel stays manageable. Built from
+  // PRIMARY_GROUPS / SECONDARY_GROUPS to avoid duplicating the taxonomy.
+  ...PRIMARY_GROUPS.map(g => ({
+    id: 'primary-' + g.name.toLowerCase(),
+    name: 'Primary · ' + g.name,
+    open: false,
+    items: g.ids.map(id => ({
+      label: () => (player.weapon === id ? '★ ' : '') + WEAPONS[id].name,
+      toggle: () => player.weapon === id,
+      run() { player.weapon = id; },
+    })),
+  })),
+  { id: 'primary-trader', name: 'Primary · Trader', open: false,
+    items: TRADER_PRIMARY_IDS.map(id => ({
+      label: () => (player.weapon === id ? '★ ' : '') + WEAPONS[id].name,
+      toggle: () => player.weapon === id,
+      run() { player.weapon = id; },
+    })),
+  },
+  ...SECONDARY_GROUPS.map(g => ({
+    id: 'secondary-' + g.name.toLowerCase(),
+    name: 'Secondary · ' + g.name,
+    open: false,
+    items: g.ids.map(id => ({
+      label: () => (player.secondary === id ? '★ ' : '') + SECONDARIES[id].name,
+      toggle: () => player.secondary === id,
+      run() { player.secondary = id; player.lastSecondary = -10; },
+    })),
+  })),
   { id: 'audio', name: 'Audio', open: false, items: [
     { label: 'Mute', toggle: () => soundMuted, run() { soundMuted = !soundMuted; } },
   ]},
@@ -2603,6 +2622,23 @@ function tryBuy(i) {
 // ---------- Arsenal (premium weapon shop) ----------
 // Per-item gold price for buying any primary/secondary from inside the shop.
 // Prices are deliberately high — this is the "I have money to burn" option.
+// Visual sub-groupings used by both the shop Arsenal tab and the cheats
+// panel — so the weapon taxonomy lives in exactly one place.
+const PRIMARY_GROUPS = [
+  { name: 'Basic',   ids: ['shotgun', 'smg', 'rifle', 'rocket'] },
+  { name: 'Special', ids: ['plus', 'tesla', 'orbit', 'rail', 'twin', 'crossbow', 'flame'] },
+  { name: 'Gag',     ids: ['chicken', 'banana', 'duck'] },
+];
+const SECONDARY_GROUPS = [
+  { name: 'Melee',   ids: ['katana', 'warhammer'] },
+  { name: 'Thrown',  ids: ['kunai', 'chakram'] },
+  { name: 'Utility', ids: ['medkit', 'decoy', 'emp', 'bomb', 'healingField'] },
+  { name: 'Tomes',   ids: ['chickenTome', 'batTome', 'wolfTome', 'spiderTome', 'spiritTome'] },
+];
+// Trader weapons are catalogued via PRIMARY_GROUPS too so the cheats panel
+// can offer a "Primary · Trader" section without duplicating the list.
+const TRADER_PRIMARY_IDS = ['fish', 'pizza', 'toaster', 'confetti', 'mower', 'noodle'];
+
 const ARSENAL_PRIMARIES = [
   { id: 'shotgun',  cost: 220 },
   { id: 'smg',      cost: 220 },
@@ -9117,17 +9153,29 @@ function drawShop() {
     ctx.font = '10px system-ui';
     ctx.fillText('click to buy · drops your old weapon', bodyX, bodyY);
     let ly = bodyY + 16;
-    ctx.fillStyle = '#d63030';
-    ctx.font = 'bold 11px system-ui';
-    ctx.fillText('PRIMARIES', bodyX, ly);
-    ly += 12;
-    ly = drawArsenalList(bodyX, ly, bodyW, ARSENAL_PRIMARIES, 'weapon', sy, clipY, clipH);
-    ly += 8;
-    ctx.fillStyle = '#d63030';
-    ctx.font = 'bold 11px system-ui';
-    ctx.fillText('SECONDARIES', bodyX, ly);
-    ly += 12;
-    ly = drawArsenalList(bodyX, ly, bodyW, ARSENAL_SECONDARIES, 'secondary', sy, clipY, clipH);
+    // Primaries — one subheader per group, only listing items whose cost
+    // entry exists (so a group with no Arsenal stock would be silently skipped).
+    for (const group of PRIMARY_GROUPS) {
+      const entries = ARSENAL_PRIMARIES.filter(e => group.ids.includes(e.id));
+      if (!entries.length) continue;
+      ctx.fillStyle = '#d63030';
+      ctx.font = 'bold 11px system-ui';
+      ctx.fillText(`PRIMARIES · ${group.name.toUpperCase()}`, bodyX, ly);
+      ly += 12;
+      ly = drawArsenalList(bodyX, ly, bodyW, entries, 'weapon', sy, clipY, clipH);
+      ly += 10;
+    }
+    // Secondaries — same layout
+    for (const group of SECONDARY_GROUPS) {
+      const entries = ARSENAL_SECONDARIES.filter(e => group.ids.includes(e.id));
+      if (!entries.length) continue;
+      ctx.fillStyle = '#d63030';
+      ctx.font = 'bold 11px system-ui';
+      ctx.fillText(`SECONDARIES · ${group.name.toUpperCase()}`, bodyX, ly);
+      ly += 12;
+      ly = drawArsenalList(bodyX, ly, bodyW, entries, 'secondary', sy, clipY, clipH);
+      ly += 10;
+    }
     contentBottom = ly;
   } else if (shopTab === 'pets') {
     ctx.fillStyle = '#9aa0ab';
