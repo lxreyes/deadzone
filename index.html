@@ -378,6 +378,16 @@ let flashRed  = 0;        // 0..1 red overlay alpha (decays)
 const swapBtn = { x: 0, y: 0, w: 140, h: 32 };  // positioned during draw
 const swapBladeBtn = { x: 0, y: 0, w: 140, h: 32 };
 
+// ---------- Game state machine ----------
+// 'menu'     — title screen, no game updates
+// 'playing'  — normal gameplay
+// 'paused'   — Escape from play; overlay with Resume / Main Menu
+// 'settings' — settings page (accessible from menu or pause)
+let gameState = 'menu';
+let trainingMode = false;
+let hasGame = false; // set true after first Play/Training; controls Resume visibility
+let menuButtons = [];     // populated by the active menu draw fn each frame
+
 // ---------- Cheats panel ----------
 // Hidden until the player types the unlock code (CHEAT_CODE) outside the shop.
 const CHEAT_CODE = '1234';
@@ -1034,14 +1044,25 @@ function darken(hex, amount = 0.4) {
 
 addEventListener('keydown', e => {
   ensureAudio(); resumeAudio();
+  // Global keys that work in every state
+  if (e.code === 'KeyM') { soundMuted = !soundMuted; if (!soundMuted) SFX.uiClick(); return; }
+  // Escape switches game-state — checked before recording the key
+  if (e.code === 'Escape') {
+    if (buildMode)                     { buildMode = false; SFX.uiClick(); return; }
+    if (gameState === 'playing')       { gameState = 'paused'; clearKeys(); SFX.uiClick(); return; }
+    if (gameState === 'paused')        { gameState = 'playing'; SFX.uiClick(); return; }
+    if (gameState === 'settings')      { gameState = hasGame ? 'paused' : 'menu'; SFX.uiClick(); return; }
+    if (gameState === 'menu')          return;
+  }
+  // While a menu overlay is up, swallow other keys so movement/shoot stay frozen.
+  if (gameState !== 'playing') return;
+
   keys[e.code] = true;
   if (e.code === 'KeyR') hardReset();
-  if (e.code === 'KeyM') { soundMuted = !soundMuted; if (!soundMuted) SFX.uiClick(); }
   if (e.code === 'KeyB' && !pendingCards) {
     buildMode = !buildMode;
     SFX.uiClick();
   }
-  if (e.code === 'Escape' && buildMode) { buildMode = false; SFX.uiClick(); }
   // card pick takes priority over everything else digit-related
   if (pendingCards) {
     if (e.code === 'Digit1') { pickCard(0); return; }
@@ -1079,6 +1100,9 @@ addEventListener('keydown', e => {
   }
 });
 addEventListener('keyup', e => { keys[e.code] = false; });
+// Drop any held movement when leaving play so the player doesn't keep walking
+// during a paused screen.
+function clearKeys() { for (const k in keys) keys[k] = false; mouse.down = false; }
 
 c.addEventListener('mousemove', e => {
   const r = c.getBoundingClientRect();
@@ -1097,6 +1121,11 @@ c.addEventListener('mousemove', e => {
 });
 c.addEventListener('mousedown', e => {
   ensureAudio(); resumeAudio();
+  // Menus take all clicks
+  if (gameState !== 'playing') {
+    if (e.button === 0) handleMenuClick();
+    return;
+  }
   // right-click triggers the secondary blade
   if (e.button === 2) {
     if (!pendingCards && !inShop()) useSecondary();
@@ -3480,6 +3509,190 @@ function drawBuildToolbar() {
   }
 }
 
+// ----- Menus -----
+function drawMenuButton(rect, label, hint, accent) {
+  const hover = pointInRect(mouse, rect);
+  ctx.fillStyle = hover ? '#1f2330' : '#13151c';
+  ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+  ctx.strokeStyle = hover ? accent : '#33363f';
+  ctx.lineWidth = hover ? 3 : 2;
+  ctx.strokeRect(rect.x, rect.y, rect.w, rect.h);
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 22px system-ui';
+  ctx.textAlign = 'center';
+  ctx.fillText(label, rect.x + rect.w / 2, rect.y + 34);
+  if (hint) {
+    ctx.fillStyle = '#9aa0ab';
+    ctx.font = '12px system-ui';
+    ctx.fillText(hint, rect.x + rect.w / 2, rect.y + 54);
+  }
+  ctx.textAlign = 'left';
+}
+
+function drawMainMenu() {
+  // dark overlay
+  ctx.fillStyle = 'rgba(6, 8, 12, 0.78)';
+  ctx.fillRect(0, 0, W, H);
+
+  // title — bigger version of the in-page header
+  ctx.fillStyle = '#ff5050';
+  ctx.font = 'bold 84px system-ui';
+  ctx.textAlign = 'center';
+  ctx.fillText('D E A D Z O N E', W / 2, H / 2 - 110);
+  ctx.fillStyle = '#9aa0ab';
+  ctx.font = '14px system-ui';
+  ctx.fillText('wave-based zombie survival', W / 2, H / 2 - 76);
+  if (bestWave > 0) {
+    ctx.fillStyle = '#88aadd';
+    ctx.font = '13px system-ui';
+    ctx.fillText(`best wave so far · ${bestWave}`, W / 2, H / 2 - 56);
+  }
+
+  // buttons
+  const bw = 280, bh = 68, gap = 14;
+  const showResume = hasGame;
+  const buttons = [];
+  if (showResume) buttons.push({ id: 'resume', label: 'Resume', hint: '', accent: '#8be08b' });
+  buttons.push({ id: 'play',     label: showResume ? 'New Game' : 'Play', hint: 'face the horde', accent: '#7ec8ff' });
+  buttons.push({ id: 'training', label: 'Training Arena',                 hint: 'cheats unlocked · practice freely', accent: '#ffd166' });
+  buttons.push({ id: 'settings', label: 'Settings',                        hint: 'audio, sprites, more', accent: '#c47eff' });
+  const totalH = buttons.length * bh + (buttons.length - 1) * gap;
+  let by = H / 2 - 20;
+  menuButtons = [];
+  for (const b of buttons) {
+    const rect = { x: (W - bw) / 2, y: by, w: bw, h: bh, id: b.id };
+    drawMenuButton(rect, b.label, b.hint, b.accent);
+    menuButtons.push(rect);
+    by += bh + gap;
+  }
+  ctx.textAlign = 'left';
+}
+
+function drawPauseMenu() {
+  ctx.fillStyle = 'rgba(6, 8, 12, 0.72)';
+  ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 48px system-ui';
+  ctx.textAlign = 'center';
+  ctx.fillText('PAUSED', W / 2, H / 2 - 110);
+  ctx.fillStyle = '#9aa0ab';
+  ctx.font = '13px system-ui';
+  ctx.fillText('press Escape to resume', W / 2, H / 2 - 80);
+
+  const bw = 240, bh = 56, gap = 12;
+  const items = [
+    { id: 'resume',   label: 'Resume',    accent: '#8be08b' },
+    { id: 'settings', label: 'Settings',  accent: '#c47eff' },
+    { id: 'menu',     label: 'Main Menu', accent: '#7ec8ff' },
+  ];
+  let by = H / 2 - 30;
+  menuButtons = [];
+  for (const it of items) {
+    const rect = { x: (W - bw) / 2, y: by, w: bw, h: bh, id: it.id };
+    drawMenuButton(rect, it.label, null, it.accent);
+    menuButtons.push(rect);
+    by += bh + gap;
+  }
+  ctx.textAlign = 'left';
+}
+
+function drawSettingsMenu() {
+  ctx.fillStyle = 'rgba(6, 8, 12, 0.82)';
+  ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 36px system-ui';
+  ctx.textAlign = 'center';
+  ctx.fillText('Settings', W / 2, 110);
+  ctx.fillStyle = '#9aa0ab';
+  ctx.font = '13px system-ui';
+  ctx.fillText('audio + visuals · sprite editor coming next', W / 2, 134);
+
+  const bw = 320, bh = 52, gap = 12;
+  let by = 180;
+  menuButtons = [];
+
+  // Mute toggle as a button-like row
+  const muteRect = { x: (W - bw) / 2, y: by, w: bw, h: bh, id: 'mute' };
+  drawMenuButton(muteRect, `Sound: ${soundMuted ? 'OFF' : 'ON'}`, 'click to toggle (M)', '#8be08b');
+  menuButtons.push(muteRect);
+  by += bh + gap;
+
+  // Cheats unlock shortcut
+  const cheatRect = { x: (W - bw) / 2, y: by, w: bw, h: bh, id: 'cheatsToggle' };
+  drawMenuButton(cheatRect, `Cheats: ${cheatsUnlocked ? 'UNLOCKED' : 'LOCKED'}`, 'click to unlock without the 1234 code', '#ffd166');
+  menuButtons.push(cheatRect);
+  by += bh + gap;
+
+  // Back
+  const backRect = { x: (W - bw) / 2, y: H - 90, w: bw, h: bh, id: 'back' };
+  drawMenuButton(backRect, 'Back', null, '#7ec8ff');
+  menuButtons.push(backRect);
+  ctx.textAlign = 'left';
+}
+
+function drawTrainingBanner() {
+  ctx.fillStyle = 'rgba(255, 209, 102, 0.18)';
+  ctx.fillRect(0, H - 22, W, 22);
+  ctx.strokeStyle = '#ffd166';
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(0, H - 22); ctx.lineTo(W, H - 22); ctx.stroke();
+  ctx.fillStyle = '#ffd166';
+  ctx.font = 'bold 11px system-ui';
+  ctx.textAlign = 'center';
+  ctx.fillText('· TRAINING ARENA · cheats unlocked · Escape to leave ·', W / 2, H - 7);
+  ctx.textAlign = 'left';
+}
+
+// Menu button click dispatch — called from mousedown when a menu is active.
+function handleMenuClick() {
+  for (const r of menuButtons) {
+    if (!pointInRect(mouse, r)) continue;
+    SFX.uiClick();
+    handleMenuAction(r.id);
+    return true;
+  }
+  return false;
+}
+
+function handleMenuAction(id) {
+  switch (id) {
+    case 'resume':
+      gameState = 'playing';
+      break;
+    case 'play':
+      hardReset();
+      trainingMode = false;
+      hasGame = true;
+      gameState = 'playing';
+      break;
+    case 'training':
+      hardReset();
+      trainingMode = true;
+      cheatsUnlocked = true;
+      cheatsOpen = true;
+      hasGame = true;
+      gameState = 'playing';
+      break;
+    case 'settings':
+      gameState = 'settings';
+      break;
+    case 'menu':
+      gameState = 'menu';
+      break;
+    case 'back':
+      // settings → wherever we came from. Default to menu if no game yet.
+      gameState = hasGame ? 'paused' : 'menu';
+      break;
+    case 'mute':
+      soundMuted = !soundMuted;
+      break;
+    case 'cheatsToggle':
+      cheatsUnlocked = !cheatsUnlocked;
+      if (cheatsUnlocked) cheatsOpen = true;
+      break;
+  }
+}
+
 function drawCheats() {
   // hidden until the player enters the unlock code
   if (!cheatsUnlocked) {
@@ -4298,41 +4511,49 @@ function tick() {
   const now = performance.now();
   const dt = Math.min(0.05, (now - lastT) / 1000);
   lastT = now;
-  gameTime += dt;
 
-  updatePlayer(dt);
-  if (mouse.down && !inShop() && !pendingCards) tryShoot(gameTime);
-  updateBullets(dt);
-  updateZombies(dt);
-  updateCoins(dt);
-  updateGuns(dt);
-  updateCrates(dt);
-  updatePickups(dt);
-  updateSlicks(dt);
-  updateChests(dt);
-  updateFloaters(dt);
-  updateSlashes(dt);
-  updateSparks(dt);
-  updateDecoys(dt);
-  updateBuildings(dt);
-  updateBladeCrates(dt);
-  updateSummons(dt);
-  updateHealFields(dt);
-  updateParticles(dt);
-  updateDecals(dt);
-  updateWave(dt);
-  // decay visual effects
-  if (shakeAmt > 0) {
-    shakeAmt -= 60 * dt;
-    if (shakeAmt < 0) shakeAmt = 0;
-  }
-  if (flashRed > 0) {
-    flashRed -= 1.4 * dt;
-    if (flashRed < 0) flashRed = 0;
+  if (gameState === 'playing') {
+    gameTime += dt;
+    updatePlayer(dt);
+    if (mouse.down && !inShop() && !pendingCards) tryShoot(gameTime);
+    updateBullets(dt);
+    updateZombies(dt);
+    updateCoins(dt);
+    updateGuns(dt);
+    updateCrates(dt);
+    updatePickups(dt);
+    updateSlicks(dt);
+    updateChests(dt);
+    updateFloaters(dt);
+    updateSlashes(dt);
+    updateSparks(dt);
+    updateDecoys(dt);
+    updateBuildings(dt);
+    updateBladeCrates(dt);
+    updateSummons(dt);
+    updateHealFields(dt);
+    updateParticles(dt);
+    updateDecals(dt);
+    updateWave(dt);
+    // decay visual effects only while playing
+    if (shakeAmt > 0) {
+      shakeAmt -= 60 * dt;
+      if (shakeAmt < 0) shakeAmt = 0;
+    }
+    if (flashRed > 0) {
+      flashRed -= 1.4 * dt;
+      if (flashRed < 0) flashRed = 0;
+    }
+    checkDeath();
   }
 
-  checkDeath();
   render();
+  // Overlay menus (game world is still rendered as a backdrop)
+  if (gameState === 'menu') drawMainMenu();
+  else if (gameState === 'paused') drawPauseMenu();
+  else if (gameState === 'settings') drawSettingsMenu();
+  if (trainingMode && gameState === 'playing') drawTrainingBanner();
+
   requestAnimationFrame(tick);
 }
 tick();
