@@ -45,6 +45,10 @@ const player = {
   invuln: 0,            // seconds
   weapon: 'pistol',
   buffs: { triple: 0, rapid: 0, fast: 0, shield: 0 },
+  // Stacked perk effects picked from the post-wave card draw.
+  // Effective values; parallel specialLevels tracks pick counts for display.
+  special: {},
+  specialLevels: {},
 };
 
 // Weapon definitions. Multipliers stack on top of player base stats.
@@ -94,6 +98,43 @@ const PICKUP_TYPES = {
     apply() { detonateNuke(player.x, player.y); } },
 };
 const PICKUP_KEYS = Object.keys(PICKUP_TYPES);
+
+// Post-wave perk cards. Player picks one of three to add a stacking effect.
+const SPECIAL_UPGRADES = {
+  lifesteal:  { name: 'Lifesteal',     desc: 'Heal 10% of damage dealt',     color: '#d63030',
+                apply() { player.special.lifesteal = (player.special.lifesteal || 0) + 0.10; } },
+  vampire:    { name: 'Vampire',       desc: '+3 HP per zombie kill',        color: '#a02828',
+                apply() { player.special.vampire = (player.special.vampire || 0) + 3; } },
+  crit:       { name: 'Critical Eye',  desc: '+12% crit chance (x2 dmg)',    color: '#ffce44',
+                apply() { player.special.crit = (player.special.crit || 0) + 0.12; } },
+  thorns:     { name: 'Thorns',        desc: '8 dmg/s to zombies on contact', color: '#7ec8ff',
+                apply() { player.special.thorns = (player.special.thorns || 0) + 8; } },
+  greed:      { name: 'Greed',         desc: '+25% money from kills',        color: '#ffd166',
+                apply() { player.special.greed = (player.special.greed || 0) + 0.25; } },
+  magnet:     { name: 'Magnet',        desc: '+40% coin pickup range',       color: '#c47eff',
+                apply() { player.special.magnet = (player.special.magnet || 0) + 0.4; } },
+  regen:      { name: 'Regeneration',  desc: '+1.5 HP per second',           color: '#5cd86b',
+                apply() { player.special.regen = (player.special.regen || 0) + 1.5; } },
+  glass:      { name: 'Glass Cannon',  desc: '+40% dmg, -15 Max HP',         color: '#ff7070',
+                apply() {
+                  player.special.glassCannon = (player.special.glassCannon || 0) + 0.4;
+                  player.maxHp = Math.max(20, player.maxHp - 15);
+                  player.hp = Math.min(player.maxHp, player.hp);
+                } },
+  berserk:    { name: 'Berserker',     desc: '+30% dmg below 30% HP',        color: '#ff5050',
+                apply() { player.special.berserk = (player.special.berserk || 0) + 0.3; } },
+  multishot:  { name: 'Multishot',     desc: '+15% chance for bonus shot',   color: '#7ec8ff',
+                apply() { player.special.multishot = (player.special.multishot || 0) + 0.15; } },
+  slow:       { name: 'Cold Bullets',  desc: 'Hits slow zombies for 1s',     color: '#5cffec',
+                apply() { player.special.slow = (player.special.slow || 0) + 1.0; } },
+  juggernaut: { name: 'Juggernaut',    desc: '+25 Max HP, heals to full',    color: '#5cb85c',
+                apply() { player.maxHp += 25; player.hp = player.maxHp; } },
+};
+const SPECIAL_KEYS = Object.keys(SPECIAL_UPGRADES);
+
+// Card picker state — populated when a wave ends, cleared on pick.
+let pendingCards = null;            // array of 3 upgrade keys, or null
+let cardRects = [null, null, null]; // cached for click hit-test
 
 // Visual / interaction state
 let nearbyGun = null;     // gun pickup the player is hovering over
@@ -522,6 +563,13 @@ function darken(hex, amount = 0.4) {
 addEventListener('keydown', e => {
   keys[e.code] = true;
   if (e.code === 'KeyR') hardReset();
+  // card pick takes priority over everything else digit-related
+  if (pendingCards) {
+    if (e.code === 'Digit1') { pickCard(0); return; }
+    if (e.code === 'Digit2') { pickCard(1); return; }
+    if (e.code === 'Digit3') { pickCard(2); return; }
+    return;
+  }
   if (e.code === 'Space' && intermission > 0) {
     intermission = 0;
     beginNextWave();
@@ -551,6 +599,13 @@ c.addEventListener('mousemove', e => {
 });
 c.addEventListener('mousedown', e => {
   if (e.button !== 0) return;
+  // card picker eats clicks while open
+  if (pendingCards) {
+    for (let i = 0; i < 3; i++) {
+      if (cardRects[i] && pointInRect(mouse, cardRects[i])) { pickCard(i); return; }
+    }
+    return;
+  }
   // cheats panel takes priority
   if (cheatsHeaderRect && pointInRect(mouse, cheatsHeaderRect)) {
     cheatsOpen = !cheatsOpen;
@@ -660,8 +715,10 @@ function dropBurst(x, y, color, n = 14) {
 }
 
 function dropCoinsFor(z) {
-  const n = Math.min(6, Math.ceil(z.money / 3));
-  const per = Math.max(1, Math.round(z.money / n));
+  // greed perk inflates the drop value
+  const total = Math.round(z.money * (1 + (player.special.greed || 0)));
+  const n = Math.min(6, Math.ceil(total / 3));
+  const per = Math.max(1, Math.round(total / n));
   for (let i = 0; i < n; i++) {
     const a = Math.random() * Math.PI * 2;
     const s = 60 + Math.random() * 100;
@@ -767,9 +824,46 @@ function beginNextWave() {
 function endCurrentWave() {
   player.money += 8 + wave * 3;
   intermission = isBossWave ? 12 : 7; // longer breather after a boss
+  // every wave offers 3 random perks to pick from
+  pendingCards = pickThreeUpgrades();
+}
+
+function pickThreeUpgrades() {
+  // Fisher–Yates shuffle, take first 3 — guarantees distinct cards in one offer.
+  const arr = SPECIAL_KEYS.slice();
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr.slice(0, 3);
+}
+
+function pickCard(idx) {
+  if (!pendingCards) return;
+  const key = pendingCards[idx];
+  if (!key) return;
+  const def = SPECIAL_UPGRADES[key];
+  def.apply();
+  player.specialLevels[key] = (player.specialLevels[key] || 0) + 1;
+  // celebratory burst at the picked card
+  const r = cardRects[idx];
+  if (r) {
+    const cx = r.x + r.w / 2, cy = r.y + r.h / 2;
+    for (let i = 0; i < 32; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const s = 100 + Math.random() * 280;
+      particles.push({ x: cx, y: cy, vx: Math.cos(a)*s, vy: Math.sin(a)*s, life: 0.7 + Math.random()*0.3, color: def.color });
+    }
+    floaters.push({ x: cx, y: cy - 30, text: def.name + (player.specialLevels[key] > 1 ? ` LV ${player.specialLevels[key]}` : ''), life: 2.2, color: def.color });
+  }
+  shake(6);
+  pendingCards = null;
+  cardRects = [null, null, null];
 }
 
 function updateWave(dt) {
+  // Card pick blocks the wave from starting — perk first, then countdown.
+  if (pendingCards) return;
   if (intermission > 0) {
     intermission -= dt;
     if (intermission <= 0) {
@@ -801,9 +895,17 @@ function tryShoot(nowSec) {
   const dx = mouse.x - player.x, dy = mouse.y - player.y;
   const baseAng = Math.atan2(dy, dx);
   const extra = player.buffs.triple > 0 ? 2 : 0;          // triple buff = +2 spread shots
-  const shots = w.shots + extra;
+  // Multishot perk: rolls once per trigger pull to add a bonus shot.
+  let shots = w.shots + extra;
+  if (player.special.multishot && Math.random() < player.special.multishot) shots += 1;
   const spread = w.spread + (extra > 0 ? 0.16 : 0);
-  const damage = player.damage * w.damage;
+
+  // Base per-bullet damage, modified by glass-cannon + berserk perks.
+  let dmgBase = player.damage * w.damage;
+  dmgBase *= 1 + (player.special.glassCannon || 0);
+  if (player.special.berserk && player.hp / player.maxHp < 0.3) {
+    dmgBase *= 1 + player.special.berserk;
+  }
   const bSpeed = player.bulletSpeed * w.bulletSpeed;
   const pierce = w.pierce + player.pierce;
 
@@ -812,15 +914,18 @@ function tryShoot(nowSec) {
   muzzleFlash(muzzleX, muzzleY, baseAng);
   for (let i = 0; i < shots; i++) {
     const a = baseAng + (shots > 1 ? (i - (shots - 1) / 2) * spread : 0);
+    // Crit rolls per-bullet so a single trigger pull can mix crit + normal hits.
+    const isCrit = !!(player.special.crit && Math.random() < player.special.crit);
+    const dmg = isCrit ? dmgBase * 2 : dmgBase;
     bullets.push({
       x: player.x + Math.cos(a) * (player.r + 4),
       y: player.y + Math.sin(a) * (player.r + 4),
       vx: Math.cos(a) * bSpeed,
       vy: Math.sin(a) * bSpeed,
-      damage, pierce,
+      damage: dmg, pierce,
       hits: new Set(),
       life: w.life,
-      color: w.color,
+      color: isCrit ? '#fff5a8' : w.color,
       explosive: !!w.explosive,
       blastR: w.blastR || 0,
       blastDmg: w.blastDmg || 0,
@@ -828,6 +933,7 @@ function tryShoot(nowSec) {
       bounces: w.bounces || 0,
       leavesSlick: !!w.leavesSlick,
       spawnChicks: w.spawnChicks || 0,
+      isCrit,
     });
   }
 }
@@ -838,7 +944,14 @@ function explode(x, y, radius, dmg) {
     const z = zombies[j];
     const dx = z.x - x, dy = z.y - y;
     if (dx*dx + dy*dy < radius * radius) {
+      const dmgDealt = Math.min(dmg, z.hp);
       z.hp -= dmg;
+      if (player.special.lifesteal) {
+        player.hp = Math.min(player.maxHp, player.hp + dmgDealt * player.special.lifesteal);
+      }
+      if (player.special.slow) {
+        z.slowTimer = Math.max(z.slowTimer || 0, player.special.slow);
+      }
       if (z.hp <= 0) {
         kills++;
         spawnDeathParticles(z.x, z.y, z.color);
@@ -846,6 +959,9 @@ function explode(x, y, radius, dmg) {
         dropCoinsFor(z);
         tryDropGun(z);
         tryDropPickup(z);
+        if (player.special.vampire) {
+          player.hp = Math.min(player.maxHp, player.hp + player.special.vampire);
+        }
         if (z.isBoss) spawnBossChest(z.x, z.y);
         zombies.splice(j, 1);
       }
@@ -1007,6 +1123,11 @@ function updatePlayer(dt) {
       if (player.buffs[k] < 0) player.buffs[k] = 0;
     }
   }
+
+  // Regen perk — passive HP recovery
+  if (player.special.regen) {
+    player.hp = Math.min(player.maxHp, player.hp + player.special.regen * dt);
+  }
 }
 
 function zombieCanEnter(x, y, r) {
@@ -1025,6 +1146,11 @@ function updateZombies(dt) {
       const sx = z.x - s.x, sy = z.y - s.y;
       if (sx*sx + sy*sy < s.r * s.r) { speedMul = 0.35; break; }
     }
+    // cold-bullets slow timer
+    if (z.slowTimer && z.slowTimer > 0) {
+      z.slowTimer -= dt;
+      speedMul = Math.min(speedMul, 0.45);
+    }
     const effSpeed = z.speed * speedMul;
     const nx = z.x + (dx / d) * effSpeed * dt;
     const ny = z.y + (dy / d) * effSpeed * dt;
@@ -1040,9 +1166,10 @@ function updateZombies(dt) {
       }
     }
 
-    // contact damage to player
+    // contact damage to player + thorns retaliation
     const rr = z.r + player.r;
-    if (dx*dx + dy*dy < rr*rr && player.invuln <= 0 && !godMode) {
+    const inContact = dx*dx + dy*dy < rr*rr;
+    if (inContact && player.invuln <= 0 && !godMode) {
       if (player.buffs.shield > 0) {
         player.buffs.shield = 0;
         const knock = 12 / d;
@@ -1053,6 +1180,24 @@ function updateZombies(dt) {
       } else {
         player.hp -= z.damage * dt;
         flashRed = Math.max(flashRed, Math.min(0.35, z.damage * dt * 0.03));
+      }
+    }
+    // Thorns hits any zombie touching the player, even through invuln/shield.
+    if (inContact && player.special.thorns) {
+      z.hp -= player.special.thorns * dt;
+      if (z.hp <= 0) {
+        kills++;
+        spawnDeathParticles(z.x, z.y, z.color);
+        addBlood(z.x, z.y, z.isBoss ? 2 : 1);
+        dropCoinsFor(z);
+        tryDropGun(z);
+        tryDropPickup(z);
+        if (player.special.vampire) {
+          player.hp = Math.min(player.maxHp, player.hp + player.special.vampire);
+        }
+        if (z.isBoss) spawnBossChest(z.x, z.y);
+        zombies.splice(i, 1);
+        continue;
       }
     }
   }
@@ -1104,8 +1249,17 @@ function updateBullets(dt) {
           consumed = true;
           break;
         }
+        const dmgDealt = Math.min(b.damage, z.hp);
         z.hp -= b.damage;
         b.hits.add(z);
+        // lifesteal — heal a fraction of damage actually dealt
+        if (player.special.lifesteal) {
+          player.hp = Math.min(player.maxHp, player.hp + dmgDealt * player.special.lifesteal);
+        }
+        // cold bullets — slow the target briefly
+        if (player.special.slow) {
+          z.slowTimer = Math.max(z.slowTimer || 0, player.special.slow);
+        }
         if (z.hp <= 0) {
           kills++;
           spawnDeathParticles(z.x, z.y, z.color);
@@ -1113,6 +1267,9 @@ function updateBullets(dt) {
           dropCoinsFor(z);
           tryDropGun(z);
           tryDropPickup(z);
+          if (player.special.vampire) {
+            player.hp = Math.min(player.maxHp, player.hp + player.special.vampire);
+          }
           if (z.isBoss) { shake(18); spawnBossChest(z.x, z.y); }
           zombies.splice(j, 1);
         }
@@ -1262,7 +1419,8 @@ function updateCoins(dt) {
 
     const dx = player.x - k.x, dy = player.y - k.y;
     const d = Math.hypot(dx, dy);
-    if (d < 80) {
+    const magnetR = 80 * (1 + (player.special.magnet || 0));
+    if (d < magnetR) {
       // magnetize
       const pull = 280;
       k.x += (dx / d) * pull * dt;
@@ -1351,6 +1509,10 @@ function hardReset() {
   player.invuln = 0;
   player.lastShot = 0;
   for (const k in player.buffs) player.buffs[k] = 0;
+  player.special = {};
+  player.specialLevels = {};
+  pendingCards = null;
+  cardRects = [null, null, null];
   bullets.length = 0;
   zombies.length = 0;
   coins.length = 0;
@@ -1769,6 +1931,7 @@ function render() {
   drawCheats();
   if (nearbyGun && nearbyGun.weapon !== player.weapon) drawSwapPrompt();
   if (inShop()) drawShop();
+  drawCardPicker(); // sits on top of everything when active
 }
 
 function drawCheats() {
@@ -1992,8 +2155,9 @@ function drawWaveBanner() {
       ctx.textAlign = 'left';
     }
   }
-  // Intermission countdown — center of screen, big
-  if (intermission > 0) {
+  // Intermission countdown — center of screen, big.
+  // While a perk pick is pending, the card UI takes over this space, so skip it here.
+  if (intermission > 0 && !pendingCards) {
     ctx.fillStyle = 'rgba(0,0,0,0.42)';
     const tw = 400, th = 80;
     ctx.fillRect((W - tw) / 2, H / 2 - th / 2 - 100, tw, th);
@@ -2081,6 +2245,266 @@ function drawHud() {
       by += 14;
     }
   }
+  // Picked perks (tomes)
+  const perkKeys = Object.keys(player.specialLevels).filter(k => player.specialLevels[k] > 0);
+  if (perkKeys.length) {
+    by += 4;
+    ctx.fillStyle = '#c47eff';
+    ctx.font = 'bold 10px system-ui';
+    ctx.fillText('PERKS', 14, by);
+    by += 12;
+    for (const k of perkKeys) {
+      const def = SPECIAL_UPGRADES[k];
+      const lv = player.specialLevels[k];
+      ctx.fillStyle = def.color;
+      ctx.fillRect(14, by - 8, 8, 8);
+      ctx.fillStyle = '#dfe2e8';
+      ctx.font = 'bold 11px system-ui';
+      ctx.fillText(`${def.name}${lv > 1 ? ' ×' + lv : ''}`, 26, by);
+      by += 13;
+    }
+  }
+}
+
+function drawCardPicker() {
+  if (!pendingCards) return;
+
+  // dim the world behind the tomes
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.62)';
+  ctx.fillRect(0, 0, W, H);
+
+  // title (serif, like an arcane proclamation)
+  ctx.fillStyle = '#f4e4b5';
+  ctx.font = 'bold 28px Georgia, serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('A T O M E   B E C K O N S', W / 2, 104);
+  ctx.fillStyle = '#9aa0ab';
+  ctx.font = '13px Georgia, serif';
+  ctx.fillText('claim one  ·  click  or  press 1 / 2 / 3', W / 2, 130);
+
+  const cw = 220, ch = 296, gap = 30;
+  const totalW = 3 * cw + 2 * gap;
+  const startX = (W - totalW) / 2;
+  const yBase = (H - ch) / 2 + 30;
+
+  for (let i = 0; i < 3; i++) {
+    const key = pendingCards[i];
+    const def = SPECIAL_UPGRADES[key];
+    const lvl = player.specialLevels[key] || 0;
+    const baseX = startX + i * (cw + gap);
+    const hoverRect = { x: baseX, y: yBase, w: cw, h: ch };
+    cardRects[i] = hoverRect;
+    const hover = pointInRect(mouse, hoverRect);
+    // hover lift + idle bobble
+    const float = Math.sin(gameTime * 2.2 + i * 1.3) * 2 + (hover ? -6 : 0);
+
+    ctx.save();
+    ctx.translate(baseX, yBase + float);
+
+    // magical aura behind the tome — stronger when hovered
+    const auraR = hover ? 170 : 120;
+    const aura = ctx.createRadialGradient(cw/2, ch/2, 24, cw/2, ch/2, auraR);
+    aura.addColorStop(0, def.color + (hover ? '66' : '33'));
+    aura.addColorStop(1, def.color + '00');
+    ctx.fillStyle = aura;
+    ctx.fillRect(-40, -40, cw + 80, ch + 80);
+
+    // ----- TOME -----
+    // back cover shadow
+    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+    ctx.fillRect(4, 6, cw, ch);
+
+    // leather cover (dark, slight gradient)
+    const cover = ctx.createLinearGradient(0, 0, 0, ch);
+    cover.addColorStop(0, '#3a2410');
+    cover.addColorStop(0.5, '#5a3818');
+    cover.addColorStop(1, '#2a1808');
+    ctx.fillStyle = cover;
+    ctx.fillRect(0, 0, cw, ch);
+    // outer stroke
+    ctx.strokeStyle = '#1a0e04';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(0, 0, cw, ch);
+    // inner inset (cover frame)
+    ctx.strokeStyle = '#8a6620';
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(8, 8, cw - 16, ch - 16);
+    ctx.strokeStyle = '#5a4014';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(12, 12, cw - 24, ch - 24);
+
+    // spine accents at top & bottom (gold bands)
+    ctx.fillStyle = '#a88828';
+    ctx.fillRect(0, 18, cw, 3);
+    ctx.fillRect(0, ch - 21, cw, 3);
+
+    // ribbon bookmark hanging out the top, in the perk's color
+    ctx.fillStyle = def.color;
+    ctx.fillRect(cw - 42, -10, 9, 38);
+    // forked V end
+    ctx.beginPath();
+    ctx.moveTo(cw - 42, 28);
+    ctx.lineTo(cw - 37, 36);
+    ctx.lineTo(cw - 33, 28);
+    ctx.closePath();
+    ctx.fill();
+    // ribbon shadow line
+    ctx.fillStyle = 'rgba(0,0,0,0.25)';
+    ctx.fillRect(cw - 36, -10, 3, 38);
+
+    // PARCHMENT PAGE inset in the middle
+    const px = 22, py = 32, pw = cw - 44, ph = ch - 64;
+    const page = ctx.createLinearGradient(0, py, 0, py + ph);
+    page.addColorStop(0, '#f4e4b5');
+    page.addColorStop(0.5, '#e8d294');
+    page.addColorStop(1, '#c4a578');
+    ctx.fillStyle = page;
+    ctx.fillRect(px, py, pw, ph);
+    // page edge shadow
+    ctx.strokeStyle = '#7a5a20';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(px, py, pw, ph);
+    // age staining (faint dark splotches)
+    ctx.globalAlpha = 0.08;
+    ctx.fillStyle = '#5a3010';
+    ctx.beginPath(); ctx.arc(px + 18, py + 22, 8, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(px + pw - 30, py + ph - 38, 12, 0, Math.PI*2); ctx.fill();
+    ctx.globalAlpha = 1;
+    // gold corner flourishes on the parchment
+    ctx.strokeStyle = '#a88828';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(px + 8, py); ctx.lineTo(px, py); ctx.lineTo(px, py + 8);
+    ctx.moveTo(px + pw - 8, py); ctx.lineTo(px + pw, py); ctx.lineTo(px + pw, py + 8);
+    ctx.moveTo(px, py + ph - 8); ctx.lineTo(px, py + ph); ctx.lineTo(px + 8, py + ph);
+    ctx.moveTo(px + pw, py + ph - 8); ctx.lineTo(px + pw, py + ph); ctx.lineTo(px + pw - 8, py + ph);
+    ctx.stroke();
+
+    // TITLE on the page
+    ctx.fillStyle = '#2a1808';
+    ctx.font = 'bold 17px Georgia, serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(def.name, cw / 2, py + 28);
+    // decorative rule
+    ctx.strokeStyle = '#a88828';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(px + 18, py + 38); ctx.lineTo(px + pw - 18, py + 38);
+    ctx.stroke();
+    // tiny diamond on the rule
+    ctx.fillStyle = '#a88828';
+    ctx.beginPath();
+    ctx.moveTo(cw / 2, py + 35); ctx.lineTo(cw / 2 + 3, py + 38);
+    ctx.lineTo(cw / 2, py + 41); ctx.lineTo(cw / 2 - 3, py + 38);
+    ctx.closePath(); ctx.fill();
+
+    // RUNE CIRCLE in the page middle, glowing in the perk's color
+    const rcx = cw / 2, rcy = py + 92;
+    // outer rings
+    ctx.strokeStyle = '#a88828';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(rcx, rcy, 30, 0, Math.PI*2); ctx.stroke();
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.arc(rcx, rcy, 35, 0, Math.PI*2); ctx.stroke();
+    // tick marks around the outer ring (cardinal points)
+    for (let t = 0; t < 4; t++) {
+      const a = t * Math.PI / 2;
+      const x1 = rcx + Math.cos(a) * 30, y1 = rcy + Math.sin(a) * 30;
+      const x2 = rcx + Math.cos(a) * 35, y2 = rcy + Math.sin(a) * 35;
+      ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+    }
+    // inner glow
+    const runeGlow = ctx.createRadialGradient(rcx, rcy, 1, rcx, rcy, 28);
+    runeGlow.addColorStop(0, def.color);
+    runeGlow.addColorStop(0.7, def.color + '55');
+    runeGlow.addColorStop(1, def.color + '00');
+    ctx.fillStyle = runeGlow;
+    ctx.beginPath(); ctx.arc(rcx, rcy, 28, 0, Math.PI*2); ctx.fill();
+    // 8-pointed star sigil (rotating slowly)
+    const rot = gameTime * 0.6 + i;
+    ctx.save();
+    ctx.translate(rcx, rcy);
+    ctx.rotate(rot);
+    ctx.fillStyle = def.color;
+    ctx.strokeStyle = '#3a2010';
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    for (let k = 0; k < 8; k++) {
+      const a = (k / 8) * Math.PI * 2;
+      const r = (k % 2 === 0) ? 13 : 5;
+      const sx = Math.cos(a) * r, sy = Math.sin(a) * r;
+      if (k === 0) ctx.moveTo(sx, sy); else ctx.lineTo(sx, sy);
+    }
+    ctx.closePath();
+    ctx.fill(); ctx.stroke();
+    // central pip
+    ctx.fillStyle = '#fff5b8';
+    ctx.beginPath(); ctx.arc(0, 0, 1.8, 0, Math.PI*2); ctx.fill();
+    ctx.restore();
+
+    // DESCRIPTION text on the lower half of the page
+    ctx.fillStyle = '#2a1808';
+    ctx.font = 'italic 13px Georgia, serif';
+    ctx.textAlign = 'center';
+    wrapText(def.desc, cw / 2, py + 156, pw - 16, 17);
+
+    // PICK NUMBER medallion (top-left of cover)
+    ctx.fillStyle = '#1a0e04';
+    ctx.beginPath(); ctx.arc(20, 22, 13, 0, Math.PI*2); ctx.fill();
+    ctx.strokeStyle = '#a88828';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.fillStyle = '#f4e4b5';
+    ctx.font = 'bold 14px Georgia, serif';
+    ctx.fillText(`${i + 1}`, 20, 27);
+
+    // LEVEL plaque if already owned (top-right of cover)
+    if (lvl > 0) {
+      ctx.fillStyle = '#1a0e04';
+      ctx.fillRect(cw - 70, 8, 50, 18);
+      ctx.strokeStyle = '#a88828';
+      ctx.lineWidth = 1.2;
+      ctx.strokeRect(cw - 70, 8, 50, 18);
+      ctx.fillStyle = '#ffd166';
+      ctx.font = 'bold 10px Georgia, serif';
+      ctx.fillText(`Lv ${lvl} → ${lvl + 1}`, cw - 45, 21);
+    }
+
+    // hover ring
+    if (hover) {
+      ctx.strokeStyle = def.color;
+      ctx.lineWidth = 3;
+      ctx.strokeRect(-2, -2, cw + 4, ch + 4);
+      ctx.fillStyle = '#f4e4b5';
+      ctx.font = 'italic bold 11px Georgia, serif';
+      ctx.fillText('— claim this tome —', cw / 2, ch - 12);
+    } else {
+      ctx.fillStyle = '#a88828';
+      ctx.font = 'italic 11px Georgia, serif';
+      ctx.fillText(`press [${i + 1}]`, cw / 2, ch - 12);
+    }
+
+    ctx.restore();
+  }
+  ctx.textAlign = 'left';
+}
+
+// Minimal word-wrapper used by the card picker. Centers each line at x.
+function wrapText(text, x, y, maxWidth, lineHeight) {
+  const words = text.split(' ');
+  let line = '';
+  let cy = y;
+  for (const w of words) {
+    const test = line ? line + ' ' + w : w;
+    if (ctx.measureText(test).width > maxWidth && line) {
+      ctx.fillText(line, x, cy);
+      line = w;
+      cy += lineHeight;
+    } else {
+      line = test;
+    }
+  }
+  if (line) ctx.fillText(line, x, cy);
 }
 
 function drawShop() {
@@ -2127,7 +2551,7 @@ function tick() {
   gameTime += dt;
 
   updatePlayer(dt);
-  if (mouse.down && !inShop()) tryShoot(gameTime);
+  if (mouse.down && !inShop() && !pendingCards) tryShoot(gameTime);
   updateBullets(dt);
   updateZombies(dt);
   updateCoins(dt);
