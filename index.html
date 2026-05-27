@@ -769,8 +769,9 @@ const SECONDARIES = {
                   desc: 'Places a pad that regens HP while you stand on it' },
   // Lob an explosive bomb in the aim direction; explodes on contact / expiry.
   bomb:    { name: 'Bomb Launcher', kind: 'launcher', cooldown: 2.4, color: '#d33', tag: 'B',
-             damage: 22, speed: 620, life: 1.3, blastR: 90, blastDmg: 28,
-             desc: 'Lobs an explosive shell forward' },
+             damage: 22, blastR: 90, blastDmg: 28,
+             range: 320, flightDur: 0.75, peakHeight: 70,
+             desc: 'Arcs to a target · explodes on landing' },
   // Briefly slow every active zombie — defensive panic button.
   slowtime: { name: 'Time Slow', kind: 'slowtime', cooldown: 12.0, color: '#c47eff', tag: 't',
               duration: 4.0 },
@@ -2320,9 +2321,20 @@ function drawBullet(b) {
     return;
   }
   if (b.bulletKind === 'bomb') {
-    // round black bomb body with a glowing fuse on top
+    const lift = b.h || 0;
+    // Ground shadow — softens / shrinks as the bomb climbs higher
+    if (lift > 0) {
+      const shadowScale = 1 - Math.min(0.6, lift / 100);
+      ctx.fillStyle = `rgba(0, 0, 0, ${0.45 * shadowScale})`;
+      ctx.beginPath();
+      ctx.ellipse(b.x, b.y, 6 * (0.6 + 0.4 * shadowScale), 2 * (0.6 + 0.4 * shadowScale), 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // Bomb body lifted by `h` pixels — this is what gives the visual arc
     ctx.save();
-    ctx.translate(b.x, b.y);
+    ctx.translate(b.x, b.y - lift);
+    // Spin while in flight — only when arcing
+    if (b.arcBomb) ctx.rotate((b.flightT || 0) * Math.PI * 4);
     // body
     ctx.fillStyle = '#1a1a22';
     ctx.beginPath(); ctx.arc(0, 0, 5.5, 0, Math.PI*2); ctx.fill();
@@ -2343,6 +2355,14 @@ function drawBullet(b) {
     ctx.fillStyle = '#fff5b8';
     ctx.beginPath(); ctx.arc(4, -7, 0.8, 0, Math.PI*2); ctx.fill();
     ctx.restore();
+    // Landing-spot marker — a faint red ring at the target so the player
+    // can see where the bomb is going to land while it's mid-air.
+    if (b.arcBomb && b.flightT < 0.9) {
+      const ringR = 8 + Math.sin(gameTime * 8) * 1.2;
+      ctx.strokeStyle = `rgba(214, 48, 48, ${0.4 + 0.2 * Math.sin(gameTime * 8)})`;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.arc(b.targetX, b.targetY, ringR, 0, Math.PI * 2); ctx.stroke();
+    }
     return;
   }
   if (b.bulletKind === 'laser') {
@@ -3954,27 +3974,45 @@ function fireBow(def, ang, chargeSec) {
 // existing bullet/explode pipeline rather than introducing a new entity.
 function useBombLauncher(def) {
   const ang = Math.atan2(mouse.y - player.y, mouse.x - player.x);
+  // Lobbed shells have a hard range cap. If the cursor is closer than the
+  // max range, the bomb lands exactly at the cursor; if farther, it caps
+  // out at the max range along the aim line. Mighty-Throw extends the
+  // effective range a bit so the perk still does something here.
+  const baseRange = def.range * (1 + (player.special.eagleEye || 0));
+  const cursorDist = Math.hypot(mouse.x - player.x, mouse.y - player.y);
+  const dist = Math.min(baseRange, Math.max(60, cursorDist));
+  const startX = player.x + Math.cos(ang) * (player.r + 6);
+  const startY = player.y + Math.sin(ang) * (player.r + 6);
+  const targetX = player.x + Math.cos(ang) * dist;
+  const targetY = player.y + Math.sin(ang) * dist;
   const { dmg, isCrit } = rollPerkedDamage(def.damage);
-  const speedMul = 1 + (player.special.eagleEye || 0);
   bullets.push({
-    x: player.x + Math.cos(ang) * (player.r + 6),
-    y: player.y + Math.sin(ang) * (player.r + 6),
-    vx: Math.cos(ang) * def.speed * speedMul,
-    vy: Math.sin(ang) * def.speed * speedMul,
-    damage: dmg,
-    pierce: 0,
+    x: startX, y: startY,
+    vx: 0, vy: 0,                  // unused — arcBomb interpolates manually
+    damage: dmg, pierce: 0,
     hits: new Set(),
-    life: def.life,
+    life: 10,                      // big number; flightT clears the bomb on land
     color: isCrit ? '#fff5a8' : def.color,
-    explosive: true,
+    explosive: false,              // explosion fires on landing, not on hit
     blastR: def.blastR,
     blastDmg: def.blastDmg,
     bulletKind: 'bomb',
+    // ---- arc-bomb specific ----
+    arcBomb: true,
+    startX, startY, targetX, targetY,
+    flightT: 0,
+    flightDur: def.flightDur,
+    peakHeight: def.peakHeight,
+    h: 0,                          // current visual rise (px above ground)
+    // ---- standard tail (most ignored for arc bombs) ----
     bounces: 0, leavesSlick: false, spawnChicks: 0,
     chains: 0, chainRange: 0,
     orbitAngle: 0, orbitRadius: 0, orbitSpeed: 0,
-    homing: false,
-    isCrit,
+    homing: false, isCrit,
+    bulletKnock: 0, clearHitsInterval: 0, clearHitsAt: 0,
+    spawnToasts: 0, dropsHazard: null,
+    effect: null, effectDur: 0, effectDps: 0,
+    explodesIntoSauce: false,
   });
   muzzleFlash(player.x + Math.cos(ang) * (player.r + 10), player.y + Math.sin(ang) * (player.r + 10), ang);
   SFX.shoot('rocket');
@@ -5496,6 +5534,22 @@ function updateHealPulses(dt) {
 function updateBullets(dt) {
   for (let i = bullets.length - 1; i >= 0; i--) {
     const b = bullets[i];
+    // Arc bomb: lobbed in a parabola from start to target. Position lerps
+    // linearly along the ground; height follows a sin() arc so it visually
+    // rises and falls. Explodes on landing — no mid-air zombie collision.
+    if (b.arcBomb) {
+      b.flightT += dt / b.flightDur;
+      if (b.flightT >= 1) {
+        explode(b.targetX, b.targetY, b.blastR, b.damage + b.blastDmg);
+        bullets.splice(i, 1);
+        continue;
+      }
+      const u = b.flightT;
+      b.x = b.startX + (b.targetX - b.startX) * u;
+      b.y = b.startY + (b.targetY - b.startY) * u;
+      b.h = Math.sin(u * Math.PI) * b.peakHeight;
+      continue; // skip normal motion + hit checks
+    }
     // chakram: tracks the mouse for outTime seconds, then turns to home back
     // to the player. Same turn-rate logic in both phases — the only thing
     // that swaps is the homing target.
