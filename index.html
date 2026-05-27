@@ -2,19 +2,60 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black" />
 <title>DEADZONE</title>
 <style>
   html, body {
-    margin: 0; height: 100%;
+    margin: 0; height: 100%; width: 100%;
     background: radial-gradient(circle at 50% 30%, #14141a 0%, #06060a 80%);
     color: #eee; font-family: -apple-system, system-ui, sans-serif; overflow: hidden;
-    user-select: none;
+    user-select: none; -webkit-user-select: none;
+    -webkit-touch-callout: none;
+    -webkit-tap-highlight-color: transparent;
+    overscroll-behavior: none;
+    touch-action: none;
   }
   #wrap { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 14px; height: calc(100% - 28px); }
   h1 { margin: 0; font-size: 18px; letter-spacing: 4px; }
   .sub { font-size: 11px; opacity: 0.55; }
-  canvas { display: block; cursor: crosshair; background: #0d0e12; border-radius: 6px; box-shadow: 0 0 0 1px #2a2a33, 0 12px 40px rgba(0,0,0,0.5); }
+  /* Canvas scales to fit its container while preserving 1200x680 aspect via
+     the JS layout-fit code. On mobile the wrap chrome (h1, .sub) hides so
+     the canvas can fill the viewport. */
+  canvas { display: block; cursor: crosshair; background: #0d0e12; border-radius: 6px; box-shadow: 0 0 0 1px #2a2a33, 0 12px 40px rgba(0,0,0,0.5); touch-action: none; }
   kbd { background: #222; padding: 1px 5px; border-radius: 4px; font-family: ui-monospace, monospace; font-size: 10px; }
+
+  /* Touch / small-viewport adjustments. Strip page chrome and let the
+     canvas fill the screen. */
+  body.touch #wrap { padding: 0; gap: 0; height: 100%; justify-content: center; }
+  body.touch h1, body.touch .sub { display: none; }
+  body.touch canvas { border-radius: 0; box-shadow: none; cursor: default; }
+
+  /* Touch control overlays — virtual joystick (movement) on the left and
+     a fire/aim pad on the right. Hidden by default; shown on touch. */
+  .vctl { position: fixed; pointer-events: auto; z-index: 50; user-select: none; -webkit-user-select: none; }
+  .vctl.hidden { display: none; }
+  #vstick {
+    left: 16px; bottom: 16px; width: 140px; height: 140px;
+    border: 2px solid rgba(126, 200, 255, 0.55); border-radius: 50%;
+    background: rgba(10, 14, 22, 0.55);
+  }
+  #vstick .knob {
+    position: absolute; left: 50%; top: 50%; width: 60px; height: 60px;
+    margin: -30px 0 0 -30px; border-radius: 50%;
+    background: rgba(126, 200, 255, 0.65);
+    border: 2px solid #fff;
+  }
+  #vbtn-secondary, #vbtn-ability, #vbtn-swap {
+    width: 64px; height: 64px; border-radius: 50%; right: 16px;
+    background: rgba(10, 14, 22, 0.55);
+    color: #fff; font: bold 12px system-ui; text-align: center; line-height: 64px;
+    border: 2px solid rgba(255, 255, 255, 0.35);
+  }
+  #vbtn-secondary { bottom: 16px;  border-color: #c47eff; }
+  #vbtn-ability   { bottom: 96px;  border-color: #5cffec; }
+  #vbtn-swap      { bottom: 176px; border-color: #ffd166; }
 </style>
 </head>
 <body>
@@ -23,11 +64,38 @@
   <div class="sub"><kbd>WASD</kbd> move · <kbd>mouse</kbd> aim · <kbd>hold LMB</kbd> shoot · stand in the shop to see upgrades · press <kbd>1-9</kbd> to buy · <kbd>R</kbd> reset</div>
   <canvas id="c" width="1200" height="680"></canvas>
 </div>
+<!-- Touch overlays (added to DOM but hidden until touch is detected) -->
+<div id="vstick" class="vctl hidden"><div class="knob"></div></div>
+<div id="vbtn-swap" class="vctl hidden">SWAP</div>
+<div id="vbtn-ability" class="vctl hidden">ABIL</div>
+<div id="vbtn-secondary" class="vctl hidden">2ND</div>
 
 <script>
 const c = document.getElementById('c');
 const ctx = c.getContext('2d');
 const W = c.width, H = c.height;
+
+// ---------- Touch / mobile support ----------
+// The canvas keeps its internal 1200x680 logical resolution. CSS scales it
+// to fit the viewport while preserving aspect; mouse-event coords are
+// rescaled through c.getBoundingClientRect() (already done by the
+// existing mousemove handler), so all gameplay code keeps working.
+const isTouch = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+if (isTouch) document.body.classList.add('touch');
+
+function fitCanvas() {
+  if (!isTouch) return;
+  const aspect = W / H;
+  const vw = window.innerWidth, vh = window.innerHeight;
+  let cw, ch;
+  if (vw / vh > aspect) { ch = vh; cw = ch * aspect; }
+  else                  { cw = vw; ch = cw / aspect; }
+  c.style.width  = cw + 'px';
+  c.style.height = ch + 'px';
+}
+window.addEventListener('resize', fitCanvas);
+window.addEventListener('orientationchange', fitCanvas);
+fitCanvas();
 
 // Offscreen-cached arena floor (riveted metal sheet panels). Drawn once at
 // startup so the per-frame cost is a single drawImage blit. See
@@ -11444,6 +11512,158 @@ window.addEventListener('unhandledrejection', (e) => {
   console.error('[promise]', e.reason);
   logErrorInGame('[promise]', e.reason);
 });
+
+// ---------- Touch controls ----------
+// Wired here, after all game state + functions are declared, so we can
+// reference autoShoot / ensureAudio / useSecondary / etc. directly.
+(function setupTouch() {
+  if (!isTouch) return;
+  // Default to auto-shoot on touch — there's no LMB equivalent and freeing
+  // the right thumb for buttons makes the game playable single-handed.
+  autoShoot = true;
+
+  const vstick        = document.getElementById('vstick');
+  const vstickKnob    = vstick.querySelector('.knob');
+  const vbtnSwap      = document.getElementById('vbtn-swap');
+  const vbtnAbility   = document.getElementById('vbtn-ability');
+  const vbtnSecondary = document.getElementById('vbtn-secondary');
+  for (const el of [vstick, vbtnSwap, vbtnAbility, vbtnSecondary]) el.classList.remove('hidden');
+
+  // Small pause/menu button top-right so the user can reach Settings/Pause
+  // without a keyboard.
+  const vbtnPause = document.createElement('div');
+  vbtnPause.id = 'vbtn-pause';
+  vbtnPause.textContent = '☰';
+  vbtnPause.style.cssText = 'position:fixed; top:16px; right:16px; width:48px; height:48px; border-radius:50%; background:rgba(10,14,22,0.65); color:#fff; font:bold 22px system-ui; text-align:center; line-height:46px; border:2px solid rgba(255,255,255,0.5); z-index:50; user-select:none; -webkit-user-select:none;';
+  document.body.appendChild(vbtnPause);
+
+  function elemHit(el, x, y) {
+    const r = el.getBoundingClientRect();
+    return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+  }
+  function canvasCoords(clientX, clientY) {
+    const r = c.getBoundingClientRect();
+    return {
+      x: (clientX - r.left) * (W / r.width),
+      y: (clientY - r.top) * (H / r.height),
+    };
+  }
+
+  // Joystick state — sets keys['KeyW'] etc. so updatePlayer's existing input
+  // reading covers touch movement without any new code path.
+  const stickState = { dx: 0, dy: 0 };
+  function setStick(clientX, clientY) {
+    const r = vstick.getBoundingClientRect();
+    const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+    let dx = clientX - cx, dy = clientY - cy;
+    const mag = Math.hypot(dx, dy);
+    const maxR = r.width / 2 - 8;
+    if (mag > maxR) { dx = dx / mag * maxR; dy = dy / mag * maxR; }
+    vstickKnob.style.transform = 'translate(' + dx + 'px, ' + dy + 'px)';
+    stickState.dx = dx / maxR;
+    stickState.dy = dy / maxR;
+    refreshStickKeys();
+  }
+  function resetStick() {
+    stickState.dx = 0; stickState.dy = 0;
+    vstickKnob.style.transform = '';
+    refreshStickKeys();
+  }
+  function refreshStickKeys() {
+    const m = Math.hypot(stickState.dx, stickState.dy);
+    if (m < 0.25) {
+      keys['KeyW'] = keys['KeyS'] = keys['KeyA'] = keys['KeyD'] = false;
+      return;
+    }
+    const nx = stickState.dx, ny = stickState.dy;
+    keys['KeyW'] = ny < -0.35;
+    keys['KeyS'] = ny >  0.35;
+    keys['KeyA'] = nx < -0.35;
+    keys['KeyD'] = nx >  0.35;
+  }
+
+  function handleSwapTouch() {
+    if (nearbyGun && nearbyGun.weapon !== player.weapon) doSwapWeapon();
+    else if (nearbyBladeCrate && nearbyBladeCrate.secondary !== player.secondary) doSwapSecondary();
+  }
+  function handlePauseTouch() {
+    if (gameState === 'playing') { gameState = 'paused'; SFX.uiClick && SFX.uiClick(); updateMusicForState && updateMusicForState(); }
+    else if (gameState === 'paused') { gameState = 'playing'; SFX.uiClick && SFX.uiClick(); updateMusicForState && updateMusicForState(); }
+  }
+
+  // Each active touch carries its "kind" so move/end can dispatch correctly.
+  const activeTouches = new Map(); // identifier -> 'stick' | 'aim' | 'secondary' | 'ability' | 'swap' | 'pause' | 'ui'
+
+  document.addEventListener('touchstart', (e) => {
+    ensureAudio(); resumeAudio();
+    for (const t of e.changedTouches) {
+      const cx = t.clientX, cy = t.clientY;
+      if (elemHit(vstick, cx, cy)) {
+        activeTouches.set(t.identifier, 'stick');
+        setStick(cx, cy);
+      } else if (elemHit(vbtnPause, cx, cy)) {
+        activeTouches.set(t.identifier, 'pause');
+        handlePauseTouch();
+      } else if (elemHit(vbtnSwap, cx, cy)) {
+        activeTouches.set(t.identifier, 'swap');
+        handleSwapTouch();
+      } else if (elemHit(vbtnAbility, cx, cy)) {
+        activeTouches.set(t.identifier, 'ability');
+        tryActivateSelected();
+      } else if (elemHit(vbtnSecondary, cx, cy)) {
+        activeTouches.set(t.identifier, 'secondary');
+        const sd = SECONDARIES[player.secondary];
+        if (sd && sd.kind === 'charge') startBowCharge();
+        else useSecondary();
+      } else {
+        // Tap on the canvas / menu area — set mouse position + mouse.down,
+        // then dispatch a synthetic mousedown so all existing menu/cheat/
+        // shop click handlers fire. The existing mousedown handler already
+        // pulls coords from c.getBoundingClientRect().
+        const co = canvasCoords(cx, cy);
+        mouse.x = co.x; mouse.y = co.y;
+        activeTouches.set(t.identifier, 'aim');
+        c.dispatchEvent(new MouseEvent('mousedown', { button: 0, clientX: cx, clientY: cy, bubbles: true }));
+      }
+    }
+    e.preventDefault();
+  }, { passive: false });
+
+  document.addEventListener('touchmove', (e) => {
+    for (const t of e.changedTouches) {
+      const kind = activeTouches.get(t.identifier);
+      if (kind === 'stick') setStick(t.clientX, t.clientY);
+      else if (kind === 'aim') {
+        const co = canvasCoords(t.clientX, t.clientY);
+        mouse.x = co.x; mouse.y = co.y;
+      }
+    }
+    e.preventDefault();
+  }, { passive: false });
+
+  function endTouch(t) {
+    const kind = activeTouches.get(t.identifier);
+    activeTouches.delete(t.identifier);
+    if (kind === 'stick') resetStick();
+    else if (kind === 'aim') {
+      // If no aim touches remain, drop mouse.down via a mouseup event so
+      // any in-progress drag (slider, panel resize) releases cleanly.
+      let still = false;
+      for (const v of activeTouches.values()) if (v === 'aim') { still = true; break; }
+      if (!still) {
+        c.dispatchEvent(new MouseEvent('mouseup', { button: 0, clientX: t.clientX, clientY: t.clientY, bubbles: true }));
+      }
+    } else if (kind === 'secondary') {
+      const sd = SECONDARIES[player.secondary];
+      if (sd && sd.kind === 'charge' && player.bowHeld) releaseBow();
+    }
+  }
+  document.addEventListener('touchend',    (e) => { for (const t of e.changedTouches) endTouch(t); e.preventDefault(); }, { passive: false });
+  document.addEventListener('touchcancel', (e) => { for (const t of e.changedTouches) endTouch(t); e.preventDefault(); }, { passive: false });
+
+  // Block iOS double-tap zoom on the canvas area
+  document.addEventListener('gesturestart', (e) => e.preventDefault());
+})();
 
 tick();
 </script>
