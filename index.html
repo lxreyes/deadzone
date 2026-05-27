@@ -1468,7 +1468,6 @@ const cheatSections = [
         player.hp = player.maxHp;
       } },
     { label: 'God Mode', toggle: () => godMode, run() { godMode = !godMode; } },
-    { label: 'Auto-Shoot', toggle: () => autoShoot, run() { autoShoot = !autoShoot; } },
   ]},
   { id: 'waves', name: 'Waves & Bosses', open: false, items: [
     { label: '+5 Waves', run() {
@@ -1505,11 +1504,8 @@ const cheatSections = [
     { label: '+MiniBoss', run() { spawnMiniBoss(); } },
     { label: '+Dummy',    run() { spawnTrainerDummy(); } },
   ]},
-  // ---- Local co-op (P2 sidekick) ----
+  // ---- Local co-op cheats (toggle lives in Settings now) ----
   { id: 'coop', name: 'Co-op', open: false, items: [
-    { label: () => coopEnabled ? 'P2 Joined ★' : 'Join P2',
-      toggle: () => coopEnabled,
-      run() { coopEnabled ? disableCoop() : enableCoop(); } },
     { label: 'Heal P2', run() { player2.hp = player2.maxHp; player2.invuln = 1.0; } },
     { label: 'Teleport P2 → P1', run() { player2.x = player.x + 30; player2.y = player.y + 30; } },
   ]},
@@ -8598,6 +8594,18 @@ function drawSettingsMenu() {
   }
   by += 8;
 
+  // Co-op P2 toggle — same enable/disable used by the old cheats section
+  const coopRect = { x: (W - bw) / 2, y: by, w: bw, h: bh, id: 'toggleCoop' };
+  drawMenuButton(coopRect, `Co-op P2: ${coopEnabled ? 'ON' : 'OFF'}`, 'arrow keys move a sidekick with auto-fire', '#9bf07a');
+  menuButtons.push(coopRect);
+  by += bh + gap;
+
+  // Auto-Shoot toggle
+  const autoRect = { x: (W - bw) / 2, y: by, w: bw, h: bh, id: 'toggleAutoShoot' };
+  drawMenuButton(autoRect, `Auto-Shoot: ${autoShoot ? 'ON' : 'OFF'}`, 'P1 auto-fires at the nearest zombie', '#ffd166');
+  menuButtons.push(autoRect);
+  by += bh + gap;
+
   // Sprite Editor entry
   const spriteRect = { x: (W - bw) / 2, y: by, w: bw, h: bh, id: 'sprites' };
   drawMenuButton(spriteRect, 'Sprite Editor', 'draw your own player + zombies', '#c47eff');
@@ -9111,6 +9119,12 @@ function handleMenuAction(id) {
       soundMuted = !soundMuted;
       applyMusicMute();
       applySfxVolume();
+      break;
+    case 'toggleCoop':
+      coopEnabled ? disableCoop() : enableCoop();
+      break;
+    case 'toggleAutoShoot':
+      autoShoot = !autoShoot;
       break;
     case 'sprites':
       settingsView = 'sprites';
