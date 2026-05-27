@@ -739,8 +739,8 @@ const SECONDARIES = {
              shots: 3, spread: 0.16, speed: 920, life: 0.7, pierce: 1,
              desc: 'Throws 3 piercing daggers' },
   chakram: { name: 'Chakram', kind: 'returning', cooldown: 1.20, damage: 24, color: '#ff8040', tag: 'C',
-             speed: 620, life: 2.6, pierce: 99, outTime: 0.55,
-             desc: 'Sawblade that loops back to you' },
+             speed: 620, life: 3.4, pierce: 99, outTime: 1.4,
+             desc: 'Sawblade that tracks your cursor, then returns' },
   // Utility tools (still bound to RMB / Q)
   medkit:  { name: 'Medkit',  kind: 'heal',      cooldown: 7.0, color: '#5cd86b', tag: '+',
              heal: 45, desc: 'Heal 45 HP instantly' },
@@ -2827,13 +2827,19 @@ c.addEventListener('mousedown', e => {
     }
     return;
   }
+  // The shop panel sits at the bottom-left and visually covers anything
+  // behind it. When the player is in shop, swallow clicks landing in that
+  // area before they fall through to the cheats panel (which is also
+  // bottom-left and easily overlaps).
+  const shopUIRect = { x: 18, y: H - 540 - 18, w: 360, h: 540 };
+  const clickInShopUI = inShop() && pointInRect(mouse, shopUIRect);
   // cheats panel takes priority
-  if (cheatsHeaderRect && pointInRect(mouse, cheatsHeaderRect)) {
+  if (!clickInShopUI && cheatsHeaderRect && pointInRect(mouse, cheatsHeaderRect)) {
     cheatsDrag = { offX: mouse.x - cheatsPanel.x, offY: mouse.y - cheatsPanel.y, moved: false };
     return;
   }
   // resize handle on the bottom-right corner of an open cheats panel
-  if (cheatsOpen && cheatsResizeRect && pointInRect(mouse, cheatsResizeRect)) {
+  if (!clickInShopUI && cheatsOpen && cheatsResizeRect && pointInRect(mouse, cheatsResizeRect)) {
     cheatsResize = {
       startX: mouse.x, startY: mouse.y,
       startW: cheatsPanel.w,
@@ -2842,7 +2848,7 @@ c.addEventListener('mousedown', e => {
     };
     return;
   }
-  if (cheatsOpen) {
+  if (!clickInShopUI && cheatsOpen) {
     // tab bar — switch between general / weapons
     for (const tab of cheatsTabRects) {
       if (pointInRect(mouse, tab)) {
@@ -5490,24 +5496,31 @@ function updateHealPulses(dt) {
 function updateBullets(dt) {
   for (let i = bullets.length - 1; i >= 0; i--) {
     const b = bullets[i];
-    // chakram: flies out, then loops back to the player
+    // chakram: tracks the mouse for outTime seconds, then turns to home back
+    // to the player. Same turn-rate logic in both phases — the only thing
+    // that swaps is the homing target.
     if (b.bulletKind === 'chakram') {
       b.chakramTimer = (b.chakramTimer || 0) + dt;
       if (!b.returning && b.chakramTimer >= b.outTime) {
         b.returning = true;
         b.hits.clear();
       }
+      const tx = b.returning ? player.x : mouse.x;
+      const ty = b.returning ? player.y : mouse.y;
+      const tgtA = Math.atan2(ty - b.y, tx - b.x);
+      const curA = Math.atan2(b.vy, b.vx);
+      let da = tgtA - curA;
+      while (da >  Math.PI) da -= Math.PI*2;
+      while (da < -Math.PI) da += Math.PI*2;
+      // Looser turn outbound so the chakram orbits around the cursor rather
+      // than snapping to it; tighter on return so it always catches up.
+      const turnRate = b.returning ? 9 : 6;
+      const turn = Math.sign(da) * Math.min(Math.abs(da), turnRate * dt);
+      const newA = curA + turn;
+      const sp = Math.hypot(b.vx, b.vy);
+      b.vx = Math.cos(newA) * sp;
+      b.vy = Math.sin(newA) * sp;
       if (b.returning) {
-        const tgtA = Math.atan2(player.y - b.y, player.x - b.x);
-        const curA = Math.atan2(b.vy, b.vx);
-        let da = tgtA - curA;
-        while (da >  Math.PI) da -= Math.PI*2;
-        while (da < -Math.PI) da += Math.PI*2;
-        const turn = Math.sign(da) * Math.min(Math.abs(da), 9 * dt);
-        const newA = curA + turn;
-        const sp = Math.hypot(b.vx, b.vy);
-        b.vx = Math.cos(newA) * sp;
-        b.vy = Math.sin(newA) * sp;
         const ddx = player.x - b.x, ddy = player.y - b.y;
         if (ddx*ddx + ddy*ddy < 30 * 30) {
           bullets.splice(i, 1);
