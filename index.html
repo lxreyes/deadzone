@@ -617,6 +617,8 @@ const player = {
   weapon: 'pistol',
   secondary: 'katana',     // active utility slot; null = none
   lastSecondary: -10,      // game-time of last swing/throw for cooldown
+  bowHeld: false,          // RMB/Q held while the bow is equipped
+  bowCharge: 0,            // seconds the bow has been drawn (caps at chargeTime)
   // Dash params used by the dash ability (motion only — cooldown lives in
   // ABILITIES.dash.cooldown so the rest of the ability system can see it).
   dashDistance: 170,
@@ -772,6 +774,13 @@ const SECONDARIES = {
   // Briefly slow every active zombie — defensive panic button.
   slowtime: { name: 'Time Slow', kind: 'slowtime', cooldown: 12.0, color: '#c47eff', tag: 't',
               duration: 4.0 },
+  // Charge-up bow — hold RMB/Q to draw the arrow, release to fire. Damage and
+  // bullet speed both scale linearly with charge from min to max values.
+  bow:     { name: 'Charged Bow', kind: 'charge', cooldown: 0.3, color: '#a8c5d8', tag: 'B',
+             minDamage: 14, maxDamage: 110, chargeTime: 1.3,
+             minSpeed: 720, maxSpeed: 1400, life: 1.4,
+             minPierce: 1, maxPierce: 4,
+             desc: 'Hold to charge · longer draw = more damage & pierce' },
 };
 const SECONDARY_KEYS = Object.keys(SECONDARIES);
 
@@ -785,7 +794,7 @@ const PRIMARY_GROUPS = [
 ];
 const SECONDARY_GROUPS = [
   { name: 'Melee',   ids: ['katana', 'warhammer'] },
-  { name: 'Thrown',  ids: ['kunai', 'chakram'] },
+  { name: 'Thrown',  ids: ['kunai', 'chakram', 'bow'] },
   { name: 'Utility', ids: ['medkit', 'decoy', 'emp', 'bomb', 'healingField'] },
   { name: 'Tomes',   ids: ['chickenTome', 'batTome', 'wolfTome', 'spiderTome', 'spiritTome'] },
 ];
@@ -2057,6 +2066,40 @@ function drawBullet(b) {
     ctx.restore();
     return;
   }
+  if (b.bulletKind === 'arrow') {
+    // Charged-bow arrow — length and feather brightness scale with the draw
+    // amount stored on the bullet (bowCharge: 0..1). Tip gets a glow at full
+    // draw so a max-charge shot reads as more powerful in flight.
+    const ang = Math.atan2(b.vy, b.vx);
+    const ch = b.bowCharge != null ? b.bowCharge : 0.6;
+    const len = 12 + ch * 10;
+    ctx.save();
+    ctx.translate(b.x, b.y);
+    ctx.rotate(ang);
+    // shaft
+    ctx.fillStyle = '#c8b896';
+    ctx.fillRect(-len * 0.55, -1, len, 2);
+    // fletching (back end) — color brightens with charge
+    ctx.fillStyle = ch > 0.7 ? '#ffce44' : '#a8c5d8';
+    ctx.beginPath();
+    ctx.moveTo(-len * 0.55, -3); ctx.lineTo(-len * 0.55 + 5, 0); ctx.lineTo(-len * 0.55, 3);
+    ctx.closePath(); ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(-len * 0.55 - 3, -2.5); ctx.lineTo(-len * 0.55 + 2, 0); ctx.lineTo(-len * 0.55 - 3, 2.5);
+    ctx.closePath(); ctx.fill();
+    // arrowhead
+    ctx.fillStyle = '#1a1a1a';
+    ctx.beginPath();
+    ctx.moveTo(len * 0.45 - 4, -3); ctx.lineTo(len * 0.45 + 4, 0); ctx.lineTo(len * 0.45 - 4, 3);
+    ctx.closePath(); ctx.fill();
+    // glow at full charge
+    if (ch > 0.85) {
+      ctx.fillStyle = 'rgba(255, 206, 68, 0.6)';
+      ctx.beginPath(); ctx.arc(len * 0.45, 0, 4, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.restore();
+    return;
+  }
   if (b.bulletKind === 'bolt') {
     // crossbow bolt — thin shaft with feathered tail + arrowhead
     const ang = Math.atan2(b.vy, b.vx);
@@ -2534,7 +2577,11 @@ addEventListener('keydown', e => {
   }
   if (e.code === 'KeyE' && nearbyGun) doSwapWeapon();
   if (e.code === 'KeyF' && nearbyBladeCrate) doSwapSecondary();
-  if (e.code === 'KeyQ' && !inShop() && !pendingCards) useSecondary();
+  if (e.code === 'KeyQ' && !inShop() && !pendingCards) {
+    const sd = SECONDARIES[player.secondary];
+    if (sd && sd.kind === 'charge') startBowCharge();
+    else useSecondary();
+  }
   // Shift fires the currently-selected ability (dash is one of them)
   if ((e.code === 'ShiftLeft' || e.code === 'ShiftRight') && !inShop() && !pendingCards) {
     tryActivateSelected();
@@ -2571,7 +2618,11 @@ addEventListener('keydown', e => {
     }
   }
 });
-addEventListener('keyup', e => { keys[e.code] = false; });
+addEventListener('keyup', e => {
+  keys[e.code] = false;
+  // Bow release on Q up
+  if (e.code === 'KeyQ' && player.bowHeld) releaseBow();
+});
 
 // Scroll wheel routes by context:
 //   - tutorial overlay  → page next/prev (one step per notch)
@@ -2668,7 +2719,11 @@ c.addEventListener('mousedown', e => {
   }
   // right-click triggers the secondary blade
   if (e.button === 2) {
-    if (!pendingCards && !inShop()) useSecondary();
+    if (!pendingCards && !inShop()) {
+      const sd = SECONDARIES[player.secondary];
+      if (sd && sd.kind === 'charge') startBowCharge();
+      else useSecondary();
+    }
     return;
   }
   if (e.button !== 0) return;
@@ -2786,6 +2841,8 @@ c.addEventListener('mousedown', e => {
 });
 addEventListener('mouseup', e => {
   if (e.button === 0) mouse.down = false;
+  // Bow release on RMB up
+  if (e.button === 2 && player.bowHeld) releaseBow();
   // finish the cheats-header drag — if the mouse never moved, treat it as a toggle click
   if (cheatsDrag) {
     if (!cheatsDrag.moved) { cheatsOpen = !cheatsOpen; SFX.uiClick(); }
@@ -2859,6 +2916,7 @@ const ARSENAL_SECONDARIES = [
   { id: 'warhammer',    cost: 240 },
   { id: 'kunai',        cost: 180 },
   { id: 'chakram',      cost: 220 },
+  { id: 'bow',          cost: 300 },
   { id: 'medkit',       cost: 140 },
   { id: 'decoy',        cost: 140 },
   { id: 'emp',          cost: 220 },
@@ -3727,6 +3785,9 @@ function rollPerkedDamage(baseDmg) {
 function useSecondary() {
   const def = player.secondary && SECONDARIES[player.secondary];
   if (!def) return;
+  // Bow uses a different input model — press/hold/release — and isn't fired
+  // through this single-press path.
+  if (def.kind === 'charge') return;
   const cd = def.cooldown * (1 - (player.special.mightyThrow || 0));
   if (gameTime - player.lastSecondary < cd) return;
   player.lastSecondary = gameTime;
@@ -3741,6 +3802,69 @@ function useSecondary() {
   else if (def.kind === 'field')  useField(def);
   else if (def.kind === 'launcher') useBombLauncher(def);
   else if (def.kind === 'slowtime') useSlowTime(def);
+}
+
+// ---------- Charged Bow input lifecycle ----------
+function startBowCharge() {
+  const def = player.secondary && SECONDARIES[player.secondary];
+  if (!def || def.kind !== 'charge') return;
+  // Respect post-shot cooldown so the player can't spam tap-fire
+  const cd = def.cooldown * (1 - (player.special.mightyThrow || 0));
+  if (gameTime - player.lastSecondary < cd) return;
+  player.bowHeld = true;
+  player.bowCharge = 0;
+}
+
+function releaseBow() {
+  const def = player.secondary && SECONDARIES[player.secondary];
+  if (!def || def.kind !== 'charge' || !player.bowHeld) return;
+  player.bowHeld = false;
+  const ang = Math.atan2(mouse.y - player.y, mouse.x - player.x);
+  fireBow(def, ang, player.bowCharge);
+  player.bowCharge = 0;
+  player.lastSecondary = gameTime;
+}
+
+function cancelBowCharge() {
+  player.bowHeld = false;
+  player.bowCharge = 0;
+}
+
+function fireBow(def, ang, chargeSec) {
+  const t = Math.max(0, Math.min(1, chargeSec / def.chargeTime));
+  // Linear scale across damage / speed / pierce. At t=0 you still get a weak
+  // shot so a tap fire isn't useless.
+  const baseDmg = def.minDamage + (def.maxDamage - def.minDamage) * t;
+  const speed = def.minSpeed + (def.maxSpeed - def.minSpeed) * t;
+  const pierce = Math.floor(def.minPierce + (def.maxPierce - def.minPierce) * t);
+  // Route through the crit/perk damage roll so the bow scales with offense
+  // perks the same way other secondaries do.
+  const { dmg, isCrit } = rollPerkedDamage(baseDmg);
+  const speedMul = 1 + (player.special.eagleEye || 0);
+  bullets.push({
+    x: player.x + Math.cos(ang) * (player.r + 8),
+    y: player.y + Math.sin(ang) * (player.r + 8),
+    vx: Math.cos(ang) * speed * speedMul,
+    vy: Math.sin(ang) * speed * speedMul,
+    damage: dmg, pierce,
+    hits: new Set(),
+    life: def.life,
+    color: isCrit ? '#fff5a8' : def.color,
+    explosive: false, blastR: 0, blastDmg: 0,
+    bulletKind: 'arrow', bounces: 0, leavesSlick: false, spawnChicks: 0,
+    chains: 0, chainRange: 0,
+    orbitAngle: 0, orbitRadius: 0, orbitSpeed: 0,
+    homing: false, isCrit,
+    bulletKnock: 0, clearHitsInterval: 0, clearHitsAt: 0,
+    spawnToasts: 0, dropsHazard: null,
+    effect: null, effectDur: 0, effectDps: 0,
+    explodesIntoSauce: false,
+    bowCharge: t, // for the arrow renderer
+  });
+  // Visual punch — heavier loosens get a bigger flash + tiny screen shake
+  muzzleFlash(player.x + Math.cos(ang) * (player.r + 10), player.y + Math.sin(ang) * (player.r + 10), ang);
+  if (t > 0.8) shake(3);
+  SFX.shoot('rifle');
 }
 
 // Bomb Launcher — fire an explosive bullet in the aim direction. Reuses the
@@ -4912,6 +5036,17 @@ function updatePlayer(dt) {
 
   if (player.invuln > 0) player.invuln -= dt;
 
+  // Bow charging — accumulate draw time while held, capped at chargeTime.
+  if (player.bowHeld) {
+    const bdef = SECONDARIES[player.secondary];
+    if (!bdef || bdef.kind !== 'charge') {
+      // Player swapped off the bow mid-draw; cancel cleanly
+      cancelBowCharge();
+    } else {
+      player.bowCharge = Math.min(bdef.chargeTime, player.bowCharge + dt);
+    }
+  }
+
   for (const k in player.buffs) {
     if (k === 'shield') continue;
     if (player.buffs[k] > 0) {
@@ -5720,6 +5855,7 @@ function checkDeath() {
   player.hp = player.maxHp;
   player.x = SPAWN.x; player.y = SPAWN.y;
   for (const k in player.buffs) player.buffs[k] = 0;
+  cancelBowCharge();
   player.invuln = 2.0;
 
   // visual feedback
@@ -6789,6 +6925,38 @@ function render() {
 
   // pets (drawn under the player so the player silhouette stays primary)
   drawPets();
+
+  // Bow charge bar — above the player while the bow is drawn. Color shifts
+  // from blue → yellow as charge increases so the player can read max-draw
+  // at a glance.
+  if (player.bowHeld) {
+    const bdef = SECONDARIES[player.secondary];
+    if (bdef && bdef.kind === 'charge') {
+      const t = Math.max(0, Math.min(1, player.bowCharge / bdef.chargeTime));
+      const bw = 36, bh = 4;
+      const bx = player.x - bw / 2;
+      const by = player.y - player.r - 14;
+      // backdrop
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
+      ctx.fillRect(bx - 1, by - 1, bw + 2, bh + 2);
+      // empty track
+      ctx.fillStyle = '#22252e';
+      ctx.fillRect(bx, by, bw, bh);
+      // fill (color lerps blue → cyan → yellow)
+      let fillColor;
+      if (t < 0.5)      fillColor = '#5a87c4';
+      else if (t < 0.9) fillColor = '#9bc8e8';
+      else              fillColor = '#ffd166';
+      ctx.fillStyle = fillColor;
+      ctx.fillRect(bx, by, bw * t, bh);
+      // "FULL DRAW" indicator + flash at max
+      if (t >= 1) {
+        const pulse = 0.5 + 0.5 * Math.sin(gameTime * 16);
+        ctx.fillStyle = `rgba(255, 209, 102, ${pulse})`;
+        ctx.fillRect(bx, by, bw, bh);
+      }
+    }
+  }
 
   // player
   if (player.invuln > 0 && Math.floor(player.invuln * 12) % 2 === 0) {
