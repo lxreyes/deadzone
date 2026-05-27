@@ -801,42 +801,67 @@ let treeLevels = { combat: 0, survival: 0, economy: 0 };
 let pendingBossDeath = null; // queued boss-kill nuke processed at tick boundary
 let treeView = 'tomes';      // 'tomes' (the shop) or 'roots' (the root system)
 
-// ---------- Root System — a separate EXP tree shaped like growing roots ----------
-// Center node grants the awakening; four branches fork outward at the cardinals,
-// each with two tiers. Children require their parent. Drawn with curved lines
-// between nodes for an organic feel.
+// ---------- The Tree Of Upgrade — a separate EXP tree shaped like a real tree ----------
+// Central 'Awaken' root with four cardinal branches (3 tiers each) plus four
+// diagonal sub-branches that only require Awaken. 17 nodes total. Children
+// require their parent. Lines are drawn as curved roots for organic feel.
 const ROOT_TREE = [
-  { id: 'root',   name: 'Awaken',         desc: '+20 Max HP',           cost: 0,
-    parent: null, x: 0, y: 0,  color: '#ffd166',
+  { id: 'root',   name: 'Awaken',         desc: '+20 Max HP',                cost: 0,
+    parent: null,  x: 0, y: 0,    color: '#ffd166',
     apply() { player.maxHp += 20; player.hp = Math.min(player.maxHp, player.hp + 20); } },
   // North — defense
-  { id: 'n1',     name: 'Resilient',      desc: '+1 HP / second',       cost: 25,
-    parent: 'root', x: 0, y: -90, color: '#5cd86b',
+  { id: 'n1',     name: 'Resilient',      desc: '+1 HP / second',            cost: 25,
+    parent: 'root', x: 0, y: -80,  color: '#5cd86b',
     apply() { player.special.regen = (player.special.regen || 0) + 1; } },
-  { id: 'n2',     name: 'Bulwark',        desc: '+100 Max HP',          cost: 70,
-    parent: 'n1',   x: 0, y: -180, color: '#5cd86b',
+  { id: 'n2',     name: 'Bulwark',        desc: '+100 Max HP',               cost: 70,
+    parent: 'n1',   x: 0, y: -155, color: '#5cd86b',
     apply() { player.maxHp += 100; player.hp = Math.min(player.maxHp, player.hp + 100); } },
+  { id: 'n3',     name: 'Iron Body',      desc: '+15% damage reduction',     cost: 140,
+    parent: 'n2',   x: 0, y: -230, color: '#5cd86b',
+    apply() { player.special.ironSkin = Math.min(0.5, (player.special.ironSkin || 0) + 0.15); } },
   // East — offense
-  { id: 'e1',     name: 'Sharp Eye',      desc: '+10% crit chance',     cost: 25,
-    parent: 'root', x: 130, y: 0, color: '#ff5050',
+  { id: 'e1',     name: 'Sharp Eye',      desc: '+10% crit chance',          cost: 25,
+    parent: 'root', x: 80,  y: 0,  color: '#ff5050',
     apply() { player.special.crit = (player.special.crit || 0) + 0.1; } },
-  { id: 'e2',     name: 'Marksman',       desc: '+1 pierce',            cost: 70,
-    parent: 'e1',   x: 260, y: 0, color: '#ff5050',
+  { id: 'e2',     name: 'Marksman',       desc: '+1 pierce',                 cost: 70,
+    parent: 'e1',   x: 160, y: 0,  color: '#ff5050',
     apply() { player.pierce += 1; } },
+  { id: 'e3',     name: 'Devastator',     desc: '+25% bullet damage',        cost: 140,
+    parent: 'e2',   x: 240, y: 0,  color: '#ff5050',
+    apply() { player.special.heavyCal = (player.special.heavyCal || 0) + 0.25; } },
   // South — mobility
-  { id: 's1',     name: 'Wind Step',      desc: '+30 move speed',       cost: 25,
-    parent: 'root', x: 0, y: 90, color: '#5cffec',
+  { id: 's1',     name: 'Wind Step',      desc: '+30 move speed',            cost: 25,
+    parent: 'root', x: 0, y: 80,   color: '#5cffec',
     apply() { player.speed += 30; } },
-  { id: 's2',     name: 'Flit',           desc: '-25% dash cooldown',   cost: 70,
-    parent: 's1',   x: 0, y: 180, color: '#5cffec',
+  { id: 's2',     name: 'Flit',           desc: '-25% dash cooldown',        cost: 70,
+    parent: 's1',   x: 0, y: 155,  color: '#5cffec',
     apply() { player.special.quickstep = Math.min(0.7, (player.special.quickstep || 0) + 0.25); } },
+  { id: 's3',     name: 'Cyclone',        desc: '+50 move speed',            cost: 140,
+    parent: 's2',   x: 0, y: 230,  color: '#5cffec',
+    apply() { player.speed += 50; } },
   // West — economy
-  { id: 'w1',     name: 'Greedy Roots',   desc: '+20% money on kill',   cost: 25,
-    parent: 'root', x: -130, y: 0, color: '#ffce44',
+  { id: 'w1',     name: 'Greedy Roots',   desc: '+20% money on kill',        cost: 25,
+    parent: 'root', x: -80,  y: 0, color: '#ffce44',
     apply() { player.special.greed = (player.special.greed || 0) + 0.2; } },
-  { id: 'w2',     name: 'Hoarder',        desc: '+50% coin pickup range',cost: 70,
-    parent: 'w1',   x: -260, y: 0, color: '#ffce44',
+  { id: 'w2',     name: 'Hoarder',        desc: '+50% coin pickup range',    cost: 70,
+    parent: 'w1',   x: -160, y: 0, color: '#ffce44',
     apply() { player.special.magnet = (player.special.magnet || 0) + 0.5; } },
+  { id: 'w3',     name: 'Tycoon',         desc: '+5% bonus coin drop',       cost: 140,
+    parent: 'w2',   x: -240, y: 0, color: '#ffce44',
+    apply() { player.special.luckyFind = Math.min(1, (player.special.luckyFind || 0) + 0.05); } },
+  // Diagonal hybrid nodes — each requires only the root
+  { id: 'ne',     name: 'Sage Wisdom',    desc: 'Crits hit 2.5x instead of 2x', cost: 90,
+    parent: 'root', x: 100,  y: -100, color: '#c47eff',
+    apply() { player.special.critBurst = (player.special.critBurst || 0) + 0.5; } },
+  { id: 'nw',     name: 'Iron Will',      desc: '+5 HP per zombie kill',     cost: 90,
+    parent: 'root', x: -100, y: -100, color: '#88aadd',
+    apply() { player.special.vampire = (player.special.vampire || 0) + 5; } },
+  { id: 'se',     name: 'Heatwave',       desc: '+30% explosion radius',     cost: 90,
+    parent: 'root', x: 100,  y: 100,  color: '#ff8040',
+    apply() { player.special.mightyBoom = (player.special.mightyBoom || 0) + 0.3; } },
+  { id: 'sw',     name: 'Frost Bite',     desc: 'Hits slow zombies +1.5s',   cost: 90,
+    parent: 'root', x: -100, y: 100,  color: '#7ec8ff',
+    apply() { player.special.slow = (player.special.slow || 0) + 1.5; } },
 ];
 let rootOwned = {}; // id → true if bought
 function buyRootNode(id) {
@@ -939,6 +964,8 @@ let cheatsHeaderRect = null;
 const cheatsPanel = { x: 14, y: 168, w: 168 };
 let cheatsDrag = null;       // { offX, offY, moved } while dragging the panel
 let sliderDrag = null;       // { slider } while dragging a stat slider
+let slidersOpen = false;     // STATS section default-collapsed; user can expand
+let slidersHeaderRect = null;
 let buildToolbarRects = null; // populated each frame by drawBuildToolbar
 
 // Each cheat: label (string or () => string) + run() to execute.
@@ -1857,6 +1884,12 @@ c.addEventListener('mousedown', e => {
         return;
       }
     }
+    // STATS section header — toggles sliders open/closed
+    if (slidersHeaderRect && pointInRect(mouse, slidersHeaderRect)) {
+      slidersOpen = !slidersOpen;
+      SFX.uiClick();
+      return;
+    }
     // individual cheat buttons
     for (const sec of cheatSections) {
       if (!sec.open) continue;
@@ -2120,9 +2153,9 @@ function rollType() {
   return 'normal';
 }
 
-function spawnZombie() {
+function spawnZombie(pos) {
   if (zombies.length >= 100) return;
-  const { x, y } = edgeSpawnPoint();
+  const { x, y } = pos || edgeSpawnPoint();
   const type = rollType();
   const base = {
     normal: { hp: 22, speed: 62,  damage: 14, r: 12, color: '#5e8c4a', money: 3 },
@@ -2173,6 +2206,21 @@ function spawnSpecific(type) {
 // Trainer dummy — stationary punching bag at the center of the arena. Massive
 // HP, no movement, no contact damage. Shows damage floaters when hit so the
 // player can see exactly how much each weapon dishes out.
+// Tomes Shop now exposes every SPECIAL_UPGRADES entry directly. Each pick
+// stacks via the same apply() the post-wave card draw uses, costing a flat
+// EXP price per buy.
+const TOMES_SHOP_COST = 25;
+function buyShopPerk(id) {
+  const def = SPECIAL_UPGRADES[id];
+  if (!def) return;
+  if (player.exp < TOMES_SHOP_COST) return;
+  player.exp -= TOMES_SHOP_COST;
+  def.apply();
+  player.specialLevels[id] = (player.specialLevels[id] || 0) + 1;
+  floaters.push({ x: player.x, y: player.y - 22, text: def.name, life: 1.6, color: def.color });
+  SFX.perkPick();
+}
+
 function buyTreeUpgrade(branch) {
   const tree = UPGRADE_TREE[branch];
   if (!tree) return;
@@ -2320,13 +2368,22 @@ function updateWave(dt) {
     // value so the UI keeps the "ready to start" panel visible.
     return;
   }
-  // spawn remaining zombies for this wave (boss waves spawn 0)
+  // spawn remaining zombies for this wave (boss waves spawn 0). Zombies arrive
+  // in packs of 2-4 from the same edge point so they read as coordinated
+  // groups rather than a steady drip.
   if (waveZombiesToSpawn > 0) {
     waveSpawnTimer -= dt;
     while (waveSpawnTimer <= 0 && waveZombiesToSpawn > 0) {
-      spawnZombie();
-      waveZombiesToSpawn--;
-      waveSpawnTimer += Math.max(0.16, 0.85 - wave * 0.013);
+      const groupSize = Math.min(waveZombiesToSpawn, 2 + Math.floor(Math.random() * 3)); // 2..4
+      const base = edgeSpawnPoint();
+      for (let i = 0; i < groupSize; i++) {
+        const ox = (Math.random() - 0.5) * 70;
+        const oy = (Math.random() - 0.5) * 70;
+        spawnZombie({ x: base.x + ox, y: base.y + oy });
+      }
+      waveZombiesToSpawn -= groupSize;
+      // Wait roughly the same total time per zombie, but in fewer bursts.
+      waveSpawnTimer += Math.max(0.32, (0.85 - wave * 0.013) * groupSize * 0.75);
     }
   } else if (zombies.every(z => z.isDummy) && wave > 0) {
     // Dummies (training props) don't count toward wave completion
@@ -5037,7 +5094,7 @@ function drawUpgradeTree() {
   ctx.fillStyle = '#fff';
   ctx.font = 'bold 28px system-ui';
   ctx.textAlign = 'center';
-  ctx.fillText(treeView === 'roots' ? 'ROOT SYSTEM' : 'TOMES SHOP', W / 2, 48);
+  ctx.fillText(treeView === 'roots' ? 'THE TREE OF UPGRADE' : 'TOMES SHOP', W / 2, 48);
   ctx.fillStyle = '#7ec8ff';
   ctx.font = 'bold 18px system-ui';
   ctx.fillText(`${player.exp} EXP`, W / 2, 72);
@@ -5045,8 +5102,8 @@ function drawUpgradeTree() {
   // Tab switcher — Tomes Shop / Root System
   const tabW = 170, tabH = 30, tabGap = 8;
   const tabs = [
-    { id: 'tab-tomes', label: 'Tomes Shop',  view: 'tomes' },
-    { id: 'tab-roots', label: 'Root System', view: 'roots' },
+    { id: 'tab-tomes', label: 'Tomes Shop',         view: 'tomes' },
+    { id: 'tab-roots', label: 'The Tree of Upgrade', view: 'roots' },
   ];
   const totalTabW = tabs.length * tabW + (tabs.length - 1) * tabGap;
   let tx = (W - totalTabW) / 2;
@@ -5060,7 +5117,7 @@ function drawUpgradeTree() {
     ctx.lineWidth = active ? 2 : 1;
     ctx.strokeRect(rect.x, rect.y, rect.w, rect.h);
     ctx.fillStyle = '#fff';
-    ctx.font = 'bold 13px system-ui';
+    fitFont(t.label, rect.w - 12, 'bold 13px system-ui', 10);
     ctx.textAlign = 'center';
     ctx.fillText(t.label, rect.x + rect.w / 2, rect.y + 20);
     menuButtons.push(rect);
@@ -5070,76 +5127,60 @@ function drawUpgradeTree() {
   // Dispatch to the selected view
   if (treeView === 'roots') { drawRootTreeContent(); return; }
 
-  // ---- TOMES SHOP body ----
-  // Three columns of nodes
-  const colW = 280, colGap = 30;
-  const totalW = TREE_BRANCHES.length * colW + (TREE_BRANCHES.length - 1) * colGap;
-  let cx = (W - totalW) / 2;
-  for (const branchId of TREE_BRANCHES) {
-    const tree = UPGRADE_TREE[branchId];
-    const level = treeLevels[branchId] || 0;
-    // column header
-    ctx.fillStyle = tree.color;
-    ctx.font = 'bold 18px system-ui';
-    ctx.textAlign = 'center';
-    ctx.fillText(tree.name.toUpperCase(), cx + colW / 2, 156);
-    // vertical connector line
-    ctx.strokeStyle = '#22252e';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(cx + colW / 2, 176);
-    ctx.lineTo(cx + colW / 2, 176 + tree.nodes.length * 90);
-    ctx.stroke();
-    // nodes
-    for (let i = 0; i < tree.nodes.length; i++) {
-      const node = tree.nodes[i];
-      const ny = 180 + i * 90;
-      const owned = i < level;
-      const available = i === level;
-      const canAfford = available && player.exp >= node.cost;
-      const rect = { x: cx + 20, y: ny, w: colW - 40, h: 70, id: available ? `buy-${branchId}` : null };
-      const hover = available && pointInRect(mouse, rect);
-      // body
-      ctx.fillStyle = owned ? '#1c2a1c' : (available ? (hover ? '#1c2030' : '#11141c') : '#0a0c12');
-      ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
-      ctx.strokeStyle = owned ? '#5cb85c' : (available ? tree.color : '#1c1e26');
-      ctx.lineWidth = owned ? 2 : (hover ? 3 : 1.5);
-      ctx.strokeRect(rect.x, rect.y, rect.w, rect.h);
-      // colored stripe at top edge
-      ctx.fillStyle = owned ? '#5cb85c' : tree.color;
-      ctx.fillRect(rect.x, rect.y, rect.w, 3);
-      // name
-      ctx.fillStyle = owned ? '#9aa0ab' : '#fff';
-      fitFont(node.name, rect.w - 24, 'bold 15px system-ui', 11);
-      ctx.textAlign = 'left';
-      ctx.fillText(node.name, rect.x + 12, rect.y + 22);
-      // desc
-      ctx.fillStyle = '#9aa0ab';
-      fitFont(node.desc, rect.w - 24, '12px system-ui', 9);
-      ctx.fillText(node.desc, rect.x + 12, rect.y + 40);
-      // cost / status
-      ctx.textAlign = 'right';
-      if (owned) {
-        ctx.fillStyle = '#5cb85c';
-        ctx.font = 'bold 12px system-ui';
-        ctx.fillText('OWNED', rect.x + rect.w - 12, rect.y + 58);
-      } else if (available) {
-        ctx.fillStyle = canAfford ? '#7ec8ff' : '#d33';
-        ctx.font = 'bold 13px system-ui';
-        ctx.fillText(`${node.cost} EXP`, rect.x + rect.w - 12, rect.y + 58);
-      } else {
-        ctx.fillStyle = '#5a5d66';
-        ctx.font = 'bold 11px system-ui';
-        ctx.fillText('LOCKED', rect.x + rect.w - 12, rect.y + 58);
-      }
-      // tier label on the left
-      ctx.fillStyle = '#5a5d66';
-      ctx.font = 'bold 10px system-ui';
-      ctx.textAlign = 'left';
-      ctx.fillText(`Tier ${i + 1}`, rect.x + 12, rect.y + 58);
-      if (available) menuButtons.push(rect);
+  // ---- TOMES SHOP body — every SPECIAL_UPGRADES entry as a buyable card ----
+  ctx.fillStyle = '#9aa0ab';
+  ctx.font = '13px system-ui';
+  ctx.textAlign = 'center';
+  ctx.fillText(`each tome costs ${TOMES_SHOP_COST} EXP · picks stack`, W / 2, 142);
+
+  const allIds = Object.keys(SPECIAL_UPGRADES);
+  const cols = 4;
+  const rows = Math.ceil(allIds.length / cols);
+  const cardW = 220, cardH = 60, cgap = 10;
+  const gridW = cols * cardW + (cols - 1) * cgap;
+  const gridX = (W - gridW) / 2;
+  const gridY = 162;
+
+  for (let i = 0; i < allIds.length; i++) {
+    const id = allIds[i];
+    const def = SPECIAL_UPGRADES[id];
+    const col = i % cols, row = Math.floor(i / cols);
+    const rx = gridX + col * (cardW + cgap);
+    const ry = gridY + row * (cardH + cgap);
+    const lvl = player.specialLevels[id] || 0;
+    const canAfford = player.exp >= TOMES_SHOP_COST;
+    const rect = { x: rx, y: ry, w: cardW, h: cardH, id: 'shop-' + id };
+    const hover = pointInRect(mouse, rect);
+    // body
+    ctx.fillStyle = hover ? '#1c2030' : '#11141c';
+    ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+    ctx.strokeStyle = hover ? def.color : (lvl > 0 ? '#5cb85c' : '#33363f');
+    ctx.lineWidth = hover ? 2 : (lvl > 0 ? 1.5 : 1);
+    ctx.strokeRect(rect.x, rect.y, rect.w, rect.h);
+    // colored stripe down the left edge
+    ctx.fillStyle = def.color;
+    ctx.fillRect(rect.x, rect.y, 4, rect.h);
+    // name (top line)
+    ctx.fillStyle = '#fff';
+    fitFont(def.name, rect.w - 70, 'bold 13px system-ui', 10);
+    ctx.textAlign = 'left';
+    ctx.fillText(def.name, rect.x + 12, rect.y + 19);
+    // desc (second line, smaller)
+    ctx.fillStyle = '#9aa0ab';
+    fitFont(def.desc, rect.w - 70, '11px system-ui', 9);
+    ctx.fillText(def.desc, rect.x + 12, rect.y + 36);
+    // level + cost on the right
+    ctx.textAlign = 'right';
+    if (lvl > 0) {
+      ctx.fillStyle = '#5cb85c';
+      ctx.font = 'bold 11px system-ui';
+      ctx.fillText('×' + lvl, rect.x + rect.w - 12, rect.y + 19);
     }
-    cx += colW + colGap;
+    ctx.fillStyle = canAfford ? '#7ec8ff' : '#d33';
+    ctx.font = 'bold 11px system-ui';
+    ctx.fillText(`${TOMES_SHOP_COST} EXP`, rect.x + rect.w - 12, rect.y + 50);
+    ctx.textAlign = 'left';
+    menuButtons.push(rect);
   }
 
   // close button
@@ -5349,15 +5390,10 @@ function handleMenuAction(id) {
       break;
     case 'tab-tomes': treeView = 'tomes'; break;
     case 'tab-roots': treeView = 'roots'; break;
-    case 'buy-combat':
-    case 'buy-survival':
-    case 'buy-economy': {
-      const branch = id.slice('buy-'.length);
-      buyTreeUpgrade(branch);
-      break;
-    }
     default:
-      if (id && id.startsWith('root-')) {
+      if (id && id.startsWith('shop-')) {
+        buyShopPerk(id.slice('shop-'.length));
+      } else if (id && id.startsWith('root-')) {
         buyRootNode(id.slice('root-'.length));
       }
       break;
@@ -5369,6 +5405,7 @@ function drawCheats() {
   // hidden until the player enters the unlock code
   if (!cheatsUnlocked) {
     cheatsHeaderRect = null;
+    slidersHeaderRect = null;
     for (const sec of cheatSections) {
       sec.headerRect = null;
       for (const c of sec.items) c.rect = null;
@@ -5385,7 +5422,8 @@ function drawCheats() {
       bodyH += secH + 2;
       if (sec.open) bodyH += sec.items.length * (btnH + 3) + 4;
     }
-    bodyH += cheatSliders.length * (sliderH + 2) + 18;
+    bodyH += secH + 2; // STATS header always reserves a row
+    if (slidersOpen) bodyH += cheatSliders.length * (sliderH + 2) + 6;
   }
   const h = cheatsOpen ? header + bodyH + 6 : header;
   ctx.fillStyle = 'rgba(8, 10, 16, 0.92)';
@@ -5414,6 +5452,7 @@ function drawCheats() {
   cheatsHeaderRect = { x, y, w, h: header };
 
   if (!cheatsOpen) {
+    slidersHeaderRect = null;
     for (const sec of cheatSections) {
       sec.headerRect = null;
       for (const c of sec.items) c.rect = null;
@@ -5468,16 +5507,29 @@ function drawCheats() {
     by += 2;
   }
 
-  // Stats section header
-  by += 6;
-  ctx.fillStyle = '#22252e';
-  ctx.fillRect(x + 8, by, w - 16, 1);
-  by += 4;
+  // STATS section header — collapsible (matches the cheat-section style)
+  const slidersHeader = { x: x + 8, y: by, w: w - 16, h: secH };
+  slidersHeaderRect = slidersHeader;
+  const hovHeader = pointInRect(mouse, slidersHeader);
+  ctx.fillStyle = hovHeader ? '#1c2030' : '#11141c';
+  ctx.fillRect(slidersHeader.x, slidersHeader.y, slidersHeader.w, slidersHeader.h);
+  ctx.strokeStyle = '#33363f';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(slidersHeader.x, slidersHeader.y, slidersHeader.w, slidersHeader.h);
   ctx.fillStyle = '#88aadd';
   ctx.font = 'bold 10px system-ui';
   ctx.textAlign = 'left';
-  ctx.fillText('STATS', x + 10, by + 9);
-  by += 12;
+  ctx.fillText('STATS', slidersHeader.x + 8, slidersHeader.y + 12);
+  ctx.fillStyle = '#9aa0ab';
+  ctx.textAlign = 'right';
+  ctx.fillText(slidersOpen ? '▾' : '▸', slidersHeader.x + slidersHeader.w - 8, slidersHeader.y + 12);
+  ctx.textAlign = 'left';
+  by += secH + 2;
+
+  if (!slidersOpen) {
+    for (const s of cheatSliders) s.rect = null;
+    return;
+  }
 
   // Sliders
   const trackX = x + 60, trackW = w - 60 - 36, knobR = 5;
