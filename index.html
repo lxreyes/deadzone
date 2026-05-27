@@ -1548,9 +1548,9 @@ c.addEventListener('mousedown', e => {
   // Menus take all clicks
   if (gameState !== 'playing') {
     if (e.button === 0) {
-      // settings sliders are interactive even though the rest of the page
-      // is button-based — start a drag when the track is clicked
-      if (gameState === 'settings') {
+      // settings sliders are interactive only on the main settings page —
+      // the sprite editor reuses some of the same screen space.
+      if (gameState === 'settings' && settingsView === 'main') {
         for (const s of settingsSliders) {
           if (s.rect && pointInRect(mouse, s.rect)) {
             sliderDrag = { slider: s };
@@ -4071,19 +4071,38 @@ function drawBuildToolbar() {
 // ----- Menus -----
 function drawMenuButton(rect, label, hint, accent) {
   const hover = pointInRect(mouse, rect);
-  ctx.fillStyle = hover ? '#1f2330' : '#13151c';
+  // soft top→bottom gradient body
+  const grad = ctx.createLinearGradient(0, rect.y, 0, rect.y + rect.h);
+  if (hover) {
+    grad.addColorStop(0, '#262b3a');
+    grad.addColorStop(1, '#15182a');
+  } else {
+    grad.addColorStop(0, '#181b24');
+    grad.addColorStop(1, '#0c0e16');
+  }
+  ctx.fillStyle = grad;
   ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+  // colored accent stripe down the left edge
+  ctx.fillStyle = accent;
+  ctx.fillRect(rect.x, rect.y, 5, rect.h);
+  // border (slightly brighter on hover, in the accent color)
   ctx.strokeStyle = hover ? accent : '#33363f';
-  ctx.lineWidth = hover ? 3 : 2;
-  ctx.strokeRect(rect.x, rect.y, rect.w, rect.h);
+  ctx.lineWidth = hover ? 2.5 : 1.5;
+  ctx.strokeRect(rect.x + 0.5, rect.y + 0.5, rect.w - 1, rect.h - 1);
+  // subtle top highlight stripe (just on hover) — gives a tactile "lifted" feel
+  if (hover) {
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.06)';
+    ctx.fillRect(rect.x + 6, rect.y + 1, rect.w - 8, 3);
+  }
+  // label
   ctx.fillStyle = '#fff';
   ctx.font = 'bold 22px system-ui';
   ctx.textAlign = 'center';
-  ctx.fillText(label, rect.x + rect.w / 2, rect.y + 34);
+  ctx.fillText(label, rect.x + rect.w / 2 + 2, rect.y + (hint ? 34 : rect.h / 2 + 8));
   if (hint) {
-    ctx.fillStyle = '#9aa0ab';
+    ctx.fillStyle = hover ? '#bcd6ff' : '#9aa0ab';
     ctx.font = '12px system-ui';
-    ctx.fillText(hint, rect.x + rect.w / 2, rect.y + 54);
+    ctx.fillText(hint, rect.x + rect.w / 2 + 2, rect.y + 54);
   }
   ctx.textAlign = 'left';
 }
@@ -4093,18 +4112,46 @@ function drawMainMenu() {
   ctx.fillStyle = 'rgba(6, 8, 12, 0.78)';
   ctx.fillRect(0, 0, W, H);
 
-  // title — bigger version of the in-page header
-  ctx.fillStyle = '#ff5050';
+  // subtle radial red glow behind the title — makes it feel ominous without
+  // being too in-your-face
+  const titleY = H / 2 - 110;
+  const glow = ctx.createRadialGradient(W/2, titleY, 30, W/2, titleY, 400);
+  glow.addColorStop(0, 'rgba(214, 48, 48, 0.22)');
+  glow.addColorStop(1, 'rgba(214, 48, 48, 0)');
+  ctx.fillStyle = glow;
+  ctx.fillRect(0, 0, W, H);
+
+  // title — offset shadow + main red text for a touch of depth
   ctx.font = 'bold 84px system-ui';
   ctx.textAlign = 'center';
-  ctx.fillText('D E A D Z O N E', W / 2, H / 2 - 110);
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+  ctx.fillText('D E A D Z O N E', W / 2 + 3, titleY + 3);
+  ctx.fillStyle = '#ff5050';
+  ctx.fillText('D E A D Z O N E', W / 2, titleY);
+
+  // thin horizontal rule with side accents
+  const ruleY = titleY + 22;
+  ctx.strokeStyle = '#5a87c4';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(W/2 - 130, ruleY); ctx.lineTo(W/2 - 16, ruleY);
+  ctx.moveTo(W/2 + 16, ruleY); ctx.lineTo(W/2 + 130, ruleY);
+  ctx.stroke();
+  // small diamond in the middle of the rule
+  ctx.fillStyle = '#5a87c4';
+  ctx.beginPath();
+  ctx.moveTo(W/2, ruleY - 4); ctx.lineTo(W/2 + 4, ruleY);
+  ctx.lineTo(W/2, ruleY + 4); ctx.lineTo(W/2 - 4, ruleY); ctx.closePath();
+  ctx.fill();
+
+  // subtitle in all caps with letter spacing baked into the text
   ctx.fillStyle = '#9aa0ab';
-  ctx.font = '14px system-ui';
-  ctx.fillText('wave-based zombie survival', W / 2, H / 2 - 76);
+  ctx.font = 'bold 12px system-ui';
+  ctx.fillText('W A V E   ·   S U R V I V A L   ·   Z O M B I E S', W / 2, ruleY + 22);
   if (bestWave > 0) {
     ctx.fillStyle = '#88aadd';
     ctx.font = '13px system-ui';
-    ctx.fillText(`best wave so far · ${bestWave}`, W / 2, H / 2 - 56);
+    ctx.fillText(`best wave so far · ${bestWave}`, W / 2, ruleY + 44);
   }
 
   // buttons
@@ -4167,7 +4214,13 @@ const settingsSliders = [
 ];
 
 function drawSettingsMenu() {
-  if (settingsView === 'sprites') { drawSpriteEditor(); return; }
+  if (settingsView === 'sprites') {
+    // Wipe slider rects so the sprite editor's grid clicks don't overlap a
+    // stale slider track left over from the last main-settings render.
+    for (const s of settingsSliders) s.rect = null;
+    drawSpriteEditor();
+    return;
+  }
   ctx.fillStyle = 'rgba(6, 8, 12, 0.82)';
   ctx.fillRect(0, 0, W, H);
   ctx.fillStyle = '#fff';
