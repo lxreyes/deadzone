@@ -791,6 +791,10 @@ let hasGame = false; // set true after first Play/Training; controls Resume visi
 let menuButtons = [];     // populated by the active menu draw fn each frame
 let settingsView = 'main'; // 'main' or 'sprites'
 let tutorialPage = 0;     // which page of the How to Play overlay is showing
+let shopTab = 'upgrades'; // 'upgrades' | 'arsenal' | 'storage' — active tab in the shop UI
+// Hit-test rects populated by drawShop each frame so mousedown can route clicks.
+let shopTabRects = null;
+let shopBuyRects = [];     // [{ rect, action: () => void }]
 
 // ---------- Upgrade tree (bought with EXP from zombie kills, T to open) ----------
 // Three branches, four upgrades per branch, bought in order. Each upgrade
@@ -2204,6 +2208,21 @@ c.addEventListener('mousedown', e => {
     doSwapSecondary();
     return;
   }
+  // shop panel clicks (tabs + buy/retrieve rows) — only when the player is
+  // actually standing in the shop and the panel is being drawn.
+  if (inShop()) {
+    if (shopTabRects) {
+      for (const r of shopTabRects) {
+        if (pointInRect(mouse, r)) { shopTab = r.id; SFX.uiClick(); return; }
+      }
+    }
+    for (const b of shopBuyRects) {
+      if (pointInRect(mouse, b.rect)) { SFX.uiClick(); b.action(); return; }
+    }
+    // Click was inside the shop but missed every target — swallow it so
+    // holding LMB in the shop doesn't accidentally fire on mouseup.
+    return;
+  }
   mouse.down = true;
 });
 addEventListener('mouseup', e => {
@@ -2254,6 +2273,103 @@ function tryBuy(i) {
   if (player.money < u.cost) return;
   player.money -= u.cost;
   u.buy();
+}
+
+// ---------- Arsenal (premium weapon shop) ----------
+// Per-item gold price for buying any primary/secondary from inside the shop.
+// Prices are deliberately high — this is the "I have money to burn" option.
+const ARSENAL_PRIMARIES = [
+  { id: 'shotgun',  cost: 220 },
+  { id: 'smg',      cost: 220 },
+  { id: 'rifle',    cost: 280 },
+  { id: 'rocket',   cost: 360 },
+  { id: 'chicken',  cost: 240 },
+  { id: 'banana',   cost: 220 },
+  { id: 'duck',     cost: 200 },
+  { id: 'plus',     cost: 300 },
+  { id: 'tesla',    cost: 340 },
+  { id: 'orbit',    cost: 280 },
+  { id: 'rail',     cost: 480 },
+  { id: 'twin',     cost: 240 },
+  { id: 'crossbow', cost: 320 },
+  { id: 'flame',    cost: 280 },
+];
+const ARSENAL_SECONDARIES = [
+  { id: 'katana',       cost: 200 },
+  { id: 'warhammer',    cost: 240 },
+  { id: 'kunai',        cost: 180 },
+  { id: 'chakram',      cost: 220 },
+  { id: 'medkit',       cost: 140 },
+  { id: 'decoy',        cost: 140 },
+  { id: 'emp',          cost: 220 },
+  { id: 'chickenTome',  cost: 220 },
+  { id: 'batTome',      cost: 260 },
+  { id: 'wolfTome',     cost: 320 },
+  { id: 'spiderTome',   cost: 220 },
+  { id: 'spiritTome',   cost: 280 },
+  { id: 'healingField', cost: 220 },
+  { id: 'bomb',         cost: 260 },
+];
+
+function buyArsenalPrimary(id) {
+  const entry = ARSENAL_PRIMARIES.find(p => p.id === id);
+  if (!entry || player.money < entry.cost) return;
+  if (player.weapon === id) return; // already wielding it
+  player.money -= entry.cost;
+  // drop the old weapon at the player's feet (skip pistol — the infinite default)
+  const old = player.weapon;
+  if (old !== 'pistol') dropGunAt(player.x, player.y, old, 60);
+  player.weapon = id;
+  const def = WEAPONS[id];
+  if (def) {
+    showTooltip('weapon:' + id, `${def.name} equipped`, def.desc || 'New primary weapon', def.color);
+    floaters.push({ x: player.x, y: player.y - 22, text: `Bought ${def.name}`, life: 1.6, color: def.color });
+  }
+  SFX.swap();
+}
+
+function buyArsenalSecondary(id) {
+  const entry = ARSENAL_SECONDARIES.find(s => s.id === id);
+  if (!entry || player.money < entry.cost) return;
+  if (player.secondary === id) return;
+  player.money -= entry.cost;
+  player.secondary = id;
+  player.lastSecondary = -10;
+  const def = SECONDARIES[id];
+  if (def) {
+    showTooltip('sec:' + id, `${def.name} equipped`, def.desc || 'New secondary', def.color);
+    floaters.push({ x: player.x, y: player.y - 22, text: `Bought ${def.name}`, life: 1.6, color: def.color });
+  }
+  SFX.swap();
+}
+
+// ---------- Storage box (in the corner of the shop) ----------
+// When dropped weapons or utility crates time out in the world, instead of
+// vanishing they're moved into the storage box. Capped FIFO so it can't grow
+// unbounded — oldest entry falls off when full.
+const STORAGE_CAP = 12;
+const storage = []; // entries: { kind: 'weapon'|'secondary', id, color, tag, name }
+// Small chest visual in the corner of the shop world rect
+const storageChest = { x: 0, y: 0, w: 36, h: 28 }; // positioned during render
+
+function pushToStorage(kind, id) {
+  const def = kind === 'weapon' ? WEAPONS[id] : SECONDARIES[id];
+  if (!def) return;
+  storage.push({ kind, id, color: def.color, tag: def.tag || '?', name: def.name });
+  if (storage.length > STORAGE_CAP) storage.shift();
+}
+
+function retrieveFromStorage(idx) {
+  const item = storage[idx];
+  if (!item) return;
+  if (item.kind === 'weapon') {
+    // drop next to the player so they can swap normally
+    dropGunAt(player.x + 14, player.y + 14, item.id, 60);
+  } else {
+    bladeCrates.push({ x: player.x + 14, y: player.y + 14, secondary: item.id, life: 60 });
+  }
+  storage.splice(idx, 1);
+  SFX.crate();
 }
 
 // ---------- Game logic ----------
@@ -2392,7 +2508,11 @@ function updateBladeCrates(dt) {
   for (let i = bladeCrates.length - 1; i >= 0; i--) {
     const c = bladeCrates[i];
     c.life -= dt;
-    if (c.life <= 0) { bladeCrates.splice(i, 1); continue; }
+    if (c.life <= 0) {
+      pushToStorage('secondary', c.secondary);
+      bladeCrates.splice(i, 1);
+      continue;
+    }
     const dx = player.x - c.x, dy = player.y - c.y;
     const d2 = dx*dx + dy*dy;
     if (d2 < bestD2) { bestD2 = d2; nearbyBladeCrate = c; }
@@ -4131,7 +4251,11 @@ function updateGuns(dt) {
   for (let i = guns.length - 1; i >= 0; i--) {
     const g = guns[i];
     g.life -= dt;
-    if (g.life <= 0) { guns.splice(i, 1); continue; }
+    if (g.life <= 0) {
+      pushToStorage('weapon', g.weapon);
+      guns.splice(i, 1);
+      continue;
+    }
     const dx = player.x - g.x, dy = player.y - g.y;
     const d2 = dx*dx + dy*dy;
     if (d2 < bestD2) { nearbyGun = g; bestD2 = d2; }
@@ -4331,6 +4455,8 @@ function hardReset() {
   summons.length = 0;
   healFields.length = 0;
   decals.length = 0;
+  storage.length = 0;
+  shopTab = 'upgrades';
   shakeAmt = 0; flashRed = 0; nearbyGun = null;
   player.weapon = 'pistol';
   player.secondary = 'katana';
@@ -4437,6 +4563,36 @@ function render() {
   ctx.font = 'bold 14px system-ui, sans-serif';
   ctx.textAlign = 'center';
   ctx.fillText('SHOP', shop.x + shop.w / 2, shop.y - 8);
+
+  // storage chest in the bottom-left corner of the shop rect
+  storageChest.x = shop.x + 6;
+  storageChest.y = shop.y + shop.h - storageChest.h - 6;
+  const sc = storageChest;
+  ctx.fillStyle = '#3a2a18';
+  ctx.fillRect(sc.x, sc.y, sc.w, sc.h);
+  ctx.strokeStyle = '#7a5a32';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(sc.x + 0.5, sc.y + 0.5, sc.w - 1, sc.h - 1);
+  // metal band across the middle
+  ctx.fillStyle = '#7a5a32';
+  ctx.fillRect(sc.x, sc.y + sc.h / 2 - 2, sc.w, 4);
+  // padlock dot
+  ctx.fillStyle = '#ffd166';
+  ctx.beginPath();
+  ctx.arc(sc.x + sc.w / 2, sc.y + sc.h / 2, 2.5, 0, Math.PI * 2);
+  ctx.fill();
+  // count badge if any stored
+  if (storage.length > 0) {
+    ctx.fillStyle = '#d63030';
+    ctx.beginPath();
+    ctx.arc(sc.x + sc.w - 4, sc.y + 4, 8, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 10px system-ui';
+    ctx.textAlign = 'center';
+    ctx.fillText(String(storage.length), sc.x + sc.w - 4, sc.y + 8);
+  }
+  ctx.textAlign = 'left';
 
   // coins
   for (const k of coins) {
@@ -7224,11 +7380,12 @@ function wrapText(text, x, y, maxWidth, lineHeight) {
 }
 
 function drawShop() {
-  const w = 320, h = 380;
+  const w = 360, h = 540;
   const x = 18, y = H - h - 18;
-  ctx.fillStyle = 'rgba(8, 10, 16, 0.92)';
+  const accent = shopTab === 'arsenal' ? '#d63030' : shopTab === 'storage' ? '#ffd166' : '#5a87c4';
+  ctx.fillStyle = 'rgba(8, 10, 16, 0.94)';
   ctx.fillRect(x, y, w, h);
-  ctx.strokeStyle = '#5a87c4';
+  ctx.strokeStyle = accent;
   ctx.lineWidth = 2;
   ctx.strokeRect(x, y, w, h);
   ctx.textAlign = 'left';
@@ -7237,25 +7394,178 @@ function drawShop() {
   ctx.fillText('SHOP', x + 14, y + 26);
   ctx.fillStyle = '#888c95';
   ctx.font = '11px system-ui';
-  ctx.fillText('Press number to buy', x + 14, y + 42);
+  ctx.fillText(`$${player.money} on hand`, x + 14, y + 42);
 
-  let ly = y + 70;
-  for (let i = 0; i < upgrades.length; i++) {
-    const u = upgrades[i];
-    const can = player.money >= u.cost;
-    ctx.fillStyle = can ? '#fff' : '#5a5d66';
-    ctx.font = 'bold 13px system-ui';
-    ctx.fillText(`${i + 1}.  ${u.name}`, x + 14, ly);
-    ctx.fillStyle = u.type === 'perm' ? '#7ec8ff' : '#ffb070';
-    ctx.font = '9px system-ui';
-    ctx.fillText(u.type.toUpperCase(), x + 14, ly + 14);
-    ctx.textAlign = 'right';
-    ctx.fillStyle = can ? '#ffce44' : '#666';
-    ctx.font = 'bold 13px system-ui';
-    ctx.fillText(`$${u.cost}`, x + w - 14, ly);
-    ctx.textAlign = 'left';
-    ly += 32;
+  // ---- tabs ----
+  const tabs = [
+    { id: 'upgrades', label: 'Upgrades', color: '#5a87c4' },
+    { id: 'arsenal',  label: 'Arsenal',  color: '#d63030' },
+    { id: 'storage',  label: `Storage${storage.length ? ' · ' + storage.length : ''}`, color: '#ffd166' },
+  ];
+  const tabY = y + 56;
+  const tabH = 26;
+  const tabW = (w - 28 - (tabs.length - 1) * 6) / tabs.length;
+  shopTabRects = [];
+  for (let i = 0; i < tabs.length; i++) {
+    const t = tabs[i];
+    const tx = x + 14 + i * (tabW + 6);
+    const active = shopTab === t.id;
+    const rect = { x: tx, y: tabY, w: tabW, h: tabH, id: t.id };
+    ctx.fillStyle = active ? t.color : '#1c1f28';
+    ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+    ctx.strokeStyle = active ? '#fff' : '#33363f';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(rect.x + 0.5, rect.y + 0.5, rect.w - 1, rect.h - 1);
+    ctx.fillStyle = active ? '#fff' : '#dfe2e8';
+    ctx.font = 'bold 11px system-ui';
+    ctx.textAlign = 'center';
+    ctx.fillText(t.label, rect.x + rect.w / 2, rect.y + 17);
+    shopTabRects.push(rect);
   }
+  ctx.textAlign = 'left';
+
+  shopBuyRects = [];
+  const bodyX = x + 14;
+  const bodyY = tabY + tabH + 12;
+  const bodyW = w - 28;
+
+  if (shopTab === 'upgrades') {
+    ctx.fillStyle = '#888c95';
+    ctx.font = '10px system-ui';
+    ctx.fillText('press 1–9 or click to buy', bodyX, bodyY);
+    let ly = bodyY + 18;
+    for (let i = 0; i < upgrades.length; i++) {
+      const u = upgrades[i];
+      const can = player.money >= u.cost;
+      const rowH = 32;
+      const rowRect = { x: bodyX, y: ly - 14, w: bodyW, h: rowH };
+      const hover = can && pointInRect(mouse, rowRect);
+      if (hover) {
+        ctx.fillStyle = 'rgba(126, 200, 255, 0.10)';
+        ctx.fillRect(rowRect.x, rowRect.y, rowRect.w, rowRect.h);
+      }
+      ctx.fillStyle = can ? '#fff' : '#5a5d66';
+      ctx.font = 'bold 13px system-ui';
+      ctx.fillText(`${i + 1}.  ${u.name}`, bodyX, ly);
+      ctx.fillStyle = u.type === 'perm' ? '#7ec8ff' : '#ffb070';
+      ctx.font = '9px system-ui';
+      ctx.fillText(u.type.toUpperCase(), bodyX, ly + 14);
+      ctx.textAlign = 'right';
+      ctx.fillStyle = can ? '#ffce44' : '#666';
+      ctx.font = 'bold 13px system-ui';
+      ctx.fillText(`$${u.cost}`, bodyX + bodyW, ly);
+      ctx.textAlign = 'left';
+      shopBuyRects.push({ rect: rowRect, action: () => tryBuy(i) });
+      ly += rowH;
+    }
+  } else if (shopTab === 'arsenal') {
+    ctx.fillStyle = '#9aa0ab';
+    ctx.font = '10px system-ui';
+    ctx.fillText('click to buy · drops your old weapon', bodyX, bodyY);
+    let ly = bodyY + 16;
+    ctx.fillStyle = '#d63030';
+    ctx.font = 'bold 11px system-ui';
+    ctx.fillText('PRIMARIES', bodyX, ly);
+    ly += 12;
+    ly = drawArsenalList(bodyX, ly, bodyW, ARSENAL_PRIMARIES, 'weapon');
+    ly += 8;
+    ctx.fillStyle = '#d63030';
+    ctx.font = 'bold 11px system-ui';
+    ctx.fillText('SECONDARIES', bodyX, ly);
+    ly += 12;
+    drawArsenalList(bodyX, ly, bodyW, ARSENAL_SECONDARIES, 'secondary');
+  } else if (shopTab === 'storage') {
+    ctx.fillStyle = '#9aa0ab';
+    ctx.font = '10px system-ui';
+    ctx.fillText('lost weapons collect here · click to retrieve', bodyX, bodyY);
+    if (storage.length === 0) {
+      ctx.fillStyle = '#5a5d66';
+      ctx.font = '12px system-ui';
+      ctx.fillText('(empty — nothing has despawned yet)', bodyX, bodyY + 30);
+    } else {
+      const cellW = 64, cellH = 64, gap = 6;
+      const cols = Math.floor((bodyW + gap) / (cellW + gap));
+      for (let i = 0; i < storage.length; i++) {
+        const item = storage[i];
+        const cx = bodyX + (i % cols) * (cellW + gap);
+        const cy = bodyY + 18 + Math.floor(i / cols) * (cellH + gap);
+        const rect = { x: cx, y: cy, w: cellW, h: cellH };
+        const hover = pointInRect(mouse, rect);
+        ctx.fillStyle = hover ? '#1f2230' : '#13151c';
+        ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+        ctx.strokeStyle = item.color;
+        ctx.lineWidth = hover ? 2 : 1;
+        ctx.strokeRect(rect.x + 0.5, rect.y + 0.5, rect.w - 1, rect.h - 1);
+        ctx.fillStyle = item.color;
+        ctx.font = 'bold 22px system-ui';
+        ctx.textAlign = 'center';
+        ctx.fillText(item.tag, rect.x + rect.w / 2, rect.y + 32);
+        ctx.fillStyle = '#dfe2e8';
+        fitFont(item.name, rect.w - 4, 'bold 9px system-ui', 7);
+        ctx.fillText(item.name, rect.x + rect.w / 2, rect.y + 48);
+        ctx.fillStyle = item.kind === 'weapon' ? '#7ec8ff' : '#c47eff';
+        ctx.font = 'bold 7px system-ui';
+        ctx.fillText(item.kind === 'weapon' ? 'PRIMARY' : 'UTILITY', rect.x + rect.w / 2, rect.y + 60);
+        ctx.textAlign = 'left';
+        // Closure captures the current index — clone idx into a const so each
+        // row keeps its own value rather than aliasing the loop variable.
+        const idx = i;
+        shopBuyRects.push({ rect, action: () => retrieveFromStorage(idx) });
+      }
+    }
+  }
+}
+
+function drawArsenalList(x, y, w, entries, kind) {
+  const rowH = 30;
+  let ly = y;
+  for (const entry of entries) {
+    const def = kind === 'weapon' ? WEAPONS[entry.id] : SECONDARIES[entry.id];
+    if (!def) continue;
+    const equipped = kind === 'weapon' ? player.weapon === entry.id : player.secondary === entry.id;
+    const can = player.money >= entry.cost && !equipped;
+    const rowRect = { x, y: ly, w, h: rowH };
+    const hover = can && pointInRect(mouse, rowRect);
+    if (hover) {
+      ctx.fillStyle = 'rgba(214, 48, 48, 0.14)';
+      ctx.fillRect(rowRect.x, rowRect.y, rowRect.w, rowRect.h);
+    }
+    ctx.fillStyle = '#d63030';
+    ctx.fillRect(rowRect.x, rowRect.y, 2, rowRect.h);
+    ctx.fillStyle = def.color;
+    ctx.font = 'bold 14px system-ui';
+    ctx.textAlign = 'center';
+    ctx.fillText(def.tag || '?', rowRect.x + 18, rowRect.y + 20);
+    ctx.textAlign = 'left';
+    ctx.fillStyle = equipped ? '#666' : can ? '#fff' : '#5a5d66';
+    fitFont(def.name, w - 110, 'bold 12px system-ui', 9);
+    ctx.fillText(def.name, rowRect.x + 34, rowRect.y + 14);
+    if (def.desc) {
+      ctx.fillStyle = '#888c95';
+      fitFont(def.desc, w - 110, '9px system-ui', 7);
+      ctx.fillText(def.desc, rowRect.x + 34, rowRect.y + 25);
+    }
+    ctx.textAlign = 'right';
+    if (equipped) {
+      ctx.fillStyle = '#8be08b';
+      ctx.font = 'bold 10px system-ui';
+      ctx.fillText('EQUIPPED', rowRect.x + w - 4, rowRect.y + 19);
+    } else {
+      ctx.fillStyle = can ? '#ffce44' : '#666';
+      ctx.font = 'bold 13px system-ui';
+      ctx.fillText(`$${entry.cost}`, rowRect.x + w - 4, rowRect.y + 19);
+    }
+    ctx.textAlign = 'left';
+    if (can) {
+      const id = entry.id;
+      shopBuyRects.push({
+        rect: rowRect,
+        action: () => (kind === 'weapon' ? buyArsenalPrimary(id) : buyArsenalSecondary(id)),
+      });
+    }
+    ly += rowH;
+  }
+  return ly;
 }
 
 // ---------- Loop ----------
