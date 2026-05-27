@@ -55,8 +55,15 @@ const WEAPONS = {
   smg:     { name: 'SMG',      shots: 1, spread: 0.08, damage: 0.55, fireRate: 2.6, bulletSpeed: 1.05, pierce: 0, life: 1.2, color: '#7ec8ff', tag: 'M' },
   rifle:   { name: 'Rifle',    shots: 1, spread: 0.00, damage: 2.6,  fireRate: 0.55, bulletSpeed: 1.55, pierce: 2, life: 1.6, color: '#9bf07a', tag: 'R' },
   rocket:  { name: 'Rocket',   shots: 1, spread: 0.00, damage: 1.5, fireRate: 0.45, bulletSpeed: 0.75, pierce: 0, life: 1.6, color: '#ff5050', tag: 'X', explosive: true, blastR: 70, blastDmg: 30 },
+  // Gag weapons
+  chicken: { name: 'Chicken Launcher', shots: 1, spread: 0.05, damage: 1.2, fireRate: 0.5, bulletSpeed: 0.55, pierce: 0, life: 1.8, color: '#ffe066', tag: 'C',
+             explosive: true, blastR: 70, blastDmg: 18, bulletKind: 'chicken', spawnChicks: 6 },
+  banana:  { name: 'Banana Cannon',    shots: 1, spread: 0.06, damage: 0.85, fireRate: 1.5, bulletSpeed: 1.0, pierce: 3, life: 1.4, color: '#ffd942', tag: 'B',
+             bulletKind: 'banana', leavesSlick: true },
+  duck:    { name: 'Rubber Duck',      shots: 1, spread: 0.04, damage: 0.9, fireRate: 1.6, bulletSpeed: 1.05, pierce: 0, life: 2.0, color: '#ffcc66', tag: 'D',
+             bulletKind: 'duck', bounces: 3 },
 };
-const DROPPABLE_WEAPONS = ['shotgun', 'smg', 'rifle', 'rocket'];
+const DROPPABLE_WEAPONS = ['shotgun', 'smg', 'rifle', 'rocket', 'chicken', 'banana', 'duck'];
 
 // ---------- World ----------
 const bullets = [];
@@ -66,6 +73,9 @@ const particles = [];
 const guns    = []; // { x, y, weapon, life }
 const crates  = []; // { x, y, value, life }
 const pickups = []; // { x, y, type, life }
+const slicks  = []; // banana peels — { x, y, r, life, max, ang }
+const chests  = []; // boss-drop reward chests — { x, y }
+const floaters= []; // floating reward text — { x, y, text, life, color }
 const decals  = []; // blood splats on the floor
 
 // Random pickup definitions. apply() runs when the player walks over one.
@@ -233,6 +243,75 @@ function drawGun(weapon, r) {
       ctx.fillRect(x0 + r * 1.2, 5, 3, 2);
       break;
     }
+    case 'chicken': {
+      // wide tube launcher with a chicken head peeking out the muzzle
+      ctx.fillStyle = '#2a2a2a';
+      ctx.fillRect(x0, -7, r * 1.45, 14);
+      ctx.strokeRect(x0, -7, r * 1.45, 14);
+      // bore
+      ctx.fillStyle = '#0a0a0a';
+      ctx.beginPath(); ctx.arc(x0 + 4, 0, 4.5, 0, Math.PI * 2); ctx.fill();
+      // chicken head
+      ctx.fillStyle = '#fff5b8';
+      ctx.beginPath(); ctx.arc(x0 + r * 1.55, 0, 5, 0, Math.PI * 2); ctx.fill();
+      ctx.stroke();
+      // red comb
+      ctx.fillStyle = '#d63030';
+      ctx.beginPath();
+      ctx.arc(x0 + r * 1.55 - 1, -5, 1.5, 0, Math.PI * 2);
+      ctx.arc(x0 + r * 1.55 + 1, -5, 1.5, 0, Math.PI * 2);
+      ctx.fill();
+      // beak
+      ctx.fillStyle = '#ff9d3a';
+      ctx.beginPath();
+      ctx.moveTo(x0 + r * 1.55 + 5, -1);
+      ctx.lineTo(x0 + r * 1.55 + 10, 0);
+      ctx.lineTo(x0 + r * 1.55 + 5, 2);
+      ctx.closePath(); ctx.fill();
+      // eye
+      ctx.fillStyle = '#1a1a1a';
+      ctx.beginPath(); ctx.arc(x0 + r * 1.55 + 1.5, -0.5, 0.9, 0, Math.PI * 2); ctx.fill();
+      break;
+    }
+    case 'banana': {
+      // bright yellow curved body — the gun IS a banana
+      ctx.fillStyle = '#ffd942';
+      ctx.beginPath();
+      ctx.moveTo(x0 - r * 0.3, 4);
+      ctx.quadraticCurveTo(x0 + r * 0.6, -10, x0 + r * 1.7, -2);
+      ctx.quadraticCurveTo(x0 + r * 1.85, 3, x0 + r * 1.6, 5);
+      ctx.quadraticCurveTo(x0 + r * 0.6, -3, x0 - r * 0.2, 7);
+      ctx.closePath();
+      ctx.fill(); ctx.stroke();
+      // tip
+      ctx.fillStyle = '#6a4a0a';
+      ctx.fillRect(x0 + r * 1.7, -3, 3, 3);
+      break;
+    }
+    case 'duck': {
+      // small body with a duck riding on top
+      ctx.fillStyle = '#2e2e36';
+      ctx.fillRect(x0, -3, r * 0.85, 6);
+      ctx.strokeRect(x0, -3, r * 0.85, 6);
+      ctx.fillStyle = w.color;
+      ctx.fillRect(x0 + r * 0.85, -2, 4, 4); // muzzle
+      // duck body on top
+      ctx.fillStyle = '#ffe066';
+      ctx.beginPath(); ctx.arc(x0 + r * 0.5, -6, 4.5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      // duck head
+      ctx.beginPath(); ctx.arc(x0 + r * 0.95, -8, 3, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      // beak
+      ctx.fillStyle = '#ff9d3a';
+      ctx.beginPath();
+      ctx.moveTo(x0 + r * 0.95 + 2, -8);
+      ctx.lineTo(x0 + r * 0.95 + 6, -7.5);
+      ctx.lineTo(x0 + r * 0.95 + 2, -7);
+      ctx.closePath(); ctx.fill();
+      // eye
+      ctx.fillStyle = '#1a1a1a';
+      ctx.beginPath(); ctx.arc(x0 + r * 0.95 + 0.5, -8.5, 0.6, 0, Math.PI * 2); ctx.fill();
+      break;
+    }
     default: { // pistol — short, with grip below
       ctx.fillStyle = '#2e2e36';
       ctx.fillRect(x0, -3.5, r * 0.95, 7);
@@ -247,6 +326,102 @@ function drawGun(weapon, r) {
       break;
     }
   }
+}
+
+// Dispatch bullet drawing to a gag-specific shape, falling back to a plain disc.
+function drawBullet(b) {
+  if (b.bulletKind === 'chicken') {
+    const ang = Math.atan2(b.vy, b.vx);
+    ctx.save();
+    ctx.translate(b.x, b.y);
+    ctx.rotate(ang);
+    // body
+    ctx.fillStyle = '#fff5b8';
+    ctx.beginPath(); ctx.ellipse(0, 0, 7, 5.5, 0, 0, Math.PI*2); ctx.fill();
+    ctx.strokeStyle = '#15151a';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    // comb
+    ctx.fillStyle = '#d63030';
+    ctx.beginPath(); ctx.arc(-1, -5, 1.5, 0, Math.PI*2);
+    ctx.arc(1, -5, 1.5, 0, Math.PI*2); ctx.fill();
+    // beak (forward = +x)
+    ctx.fillStyle = '#ff9d3a';
+    ctx.beginPath();
+    ctx.moveTo(6, -1); ctx.lineTo(11, 0); ctx.lineTo(6, 2); ctx.closePath();
+    ctx.fill();
+    // eye
+    ctx.fillStyle = '#1a1a1a';
+    ctx.beginPath(); ctx.arc(3, -1, 0.9, 0, Math.PI*2); ctx.fill();
+    ctx.restore();
+    return;
+  }
+  if (b.bulletKind === 'chick') {
+    const ang = Math.atan2(b.vy, b.vx);
+    ctx.save();
+    ctx.translate(b.x, b.y);
+    ctx.rotate(ang);
+    ctx.fillStyle = '#ffe066';
+    ctx.beginPath(); ctx.arc(0, 0, 3.5, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#ff9d3a';
+    ctx.beginPath();
+    ctx.moveTo(2.8, 0); ctx.lineTo(5.5, 0.7); ctx.lineTo(2.8, 1.2); ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = '#1a1a1a';
+    ctx.beginPath(); ctx.arc(1.4, -1, 0.6, 0, Math.PI*2); ctx.fill();
+    ctx.restore();
+    return;
+  }
+  if (b.bulletKind === 'banana') {
+    const ang = Math.atan2(b.vy, b.vx);
+    ctx.save();
+    ctx.translate(b.x, b.y);
+    ctx.rotate(ang);
+    ctx.fillStyle = '#ffd942';
+    ctx.beginPath();
+    ctx.moveTo(-6, 3);
+    ctx.quadraticCurveTo(0, -6, 7, -1);
+    ctx.quadraticCurveTo(8, 2, 6, 3);
+    ctx.quadraticCurveTo(0, -2, -5, 5);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = '#a07e1c';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.fillStyle = '#6a4a0a';
+    ctx.fillRect(6, -2, 2.5, 2.5);
+    ctx.restore();
+    return;
+  }
+  if (b.bulletKind === 'duck') {
+    const ang = Math.atan2(b.vy, b.vx);
+    ctx.save();
+    ctx.translate(b.x, b.y);
+    ctx.rotate(ang);
+    // body
+    ctx.fillStyle = '#ffe066';
+    ctx.beginPath(); ctx.ellipse(-1, 1, 6, 4.5, 0, 0, Math.PI*2); ctx.fill();
+    ctx.strokeStyle = '#15151a';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    // head
+    ctx.fillStyle = '#ffe066';
+    ctx.beginPath(); ctx.arc(4, -2, 3.2, 0, Math.PI*2); ctx.fill();
+    ctx.stroke();
+    // beak
+    ctx.fillStyle = '#ff9d3a';
+    ctx.beginPath();
+    ctx.moveTo(6.5, -2); ctx.lineTo(11, -1.5); ctx.lineTo(6.5, -0.5); ctx.closePath();
+    ctx.fill();
+    // eye
+    ctx.fillStyle = '#1a1a1a';
+    ctx.beginPath(); ctx.arc(5, -2.7, 0.7, 0, Math.PI*2); ctx.fill();
+    ctx.restore();
+    return;
+  }
+  // default — plain circle (explosive rockets render larger)
+  ctx.fillStyle = b.color || '#ffe066';
+  ctx.beginPath(); ctx.arc(b.x, b.y, b.explosive ? 5 : 3, 0, Math.PI*2); ctx.fill();
 }
 
 // Draw a distinctive icon for a pickup type, centered at (x, y).
@@ -630,6 +805,10 @@ function tryShoot(nowSec) {
       explosive: !!w.explosive,
       blastR: w.blastR || 0,
       blastDmg: w.blastDmg || 0,
+      bulletKind: w.bulletKind || null,
+      bounces: w.bounces || 0,
+      leavesSlick: !!w.leavesSlick,
+      spawnChicks: w.spawnChicks || 0,
     });
   }
 }
@@ -648,6 +827,7 @@ function explode(x, y, radius, dmg) {
         dropCoinsFor(z);
         tryDropGun(z);
         tryDropPickup(z);
+        if (z.isBoss) spawnBossChest(z.x, z.y);
         zombies.splice(j, 1);
       }
     }
@@ -732,6 +912,49 @@ function dropGunAt(x, y, weapon, life) {
   dropBurst(x, y, WEAPONS[weapon].color, 16);
 }
 
+// Boss-defeat chest. Spawned when a boss dies; opens on contact and grants
+// a random permanent upgrade for free.
+function spawnBossChest(x, y) {
+  chests.push({ x, y });
+  dropBurst(x, y, '#ffd166', 28);
+  shake(6);
+}
+
+function openChest(c) {
+  const perms = upgrades.filter(u => u.type === 'perm');
+  const pick = perms[Math.floor(Math.random() * perms.length)];
+  pick.buy(); // applies effect AND bumps cost — consistent with shop purchases
+  floaters.push({ x: c.x, y: c.y - 8, text: pick.name + '  (FREE)', life: 2.4, color: '#ffe066' });
+  // celebratory burst
+  for (let i = 0; i < 36; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const s = 120 + Math.random() * 240;
+    particles.push({ x: c.x, y: c.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s, life: 0.7 + Math.random()*0.4, color: i % 2 ? '#ffd166' : '#fff5b8' });
+  }
+  shake(10);
+  flashRed = Math.max(flashRed, 0); // intentionally no red flash for a reward
+}
+
+function updateChests(dt) {
+  for (let i = chests.length - 1; i >= 0; i--) {
+    const c = chests[i];
+    const dx = player.x - c.x, dy = player.y - c.y;
+    if (dx*dx + dy*dy < (player.r + 16) * (player.r + 16)) {
+      openChest(c);
+      chests.splice(i, 1);
+    }
+  }
+}
+
+function updateFloaters(dt) {
+  for (let i = floaters.length - 1; i >= 0; i--) {
+    const f = floaters[i];
+    f.life -= dt;
+    f.y -= 28 * dt;
+    if (f.life <= 0) floaters.splice(i, 1);
+  }
+}
+
 function tryDropGun(z) {
   // bosses always drop, tanks have higher chance, regulars rare
   let chance = 0;
@@ -777,8 +1000,15 @@ function updateZombies(dt) {
     const z = zombies[i];
     const dx = player.x - z.x, dy = player.y - z.y;
     const d = Math.hypot(dx, dy) || 1;
-    const nx = z.x + (dx / d) * z.speed * dt;
-    const ny = z.y + (dy / d) * z.speed * dt;
+    // banana slicks slow whoever's on top of them
+    let speedMul = 1;
+    for (const s of slicks) {
+      const sx = z.x - s.x, sy = z.y - s.y;
+      if (sx*sx + sy*sy < s.r * s.r) { speedMul = 0.35; break; }
+    }
+    const effSpeed = z.speed * speedMul;
+    const nx = z.x + (dx / d) * effSpeed * dt;
+    const ny = z.y + (dy / d) * effSpeed * dt;
     if (zombieCanEnter(nx, z.y, z.r)) z.x = nx;
     if (zombieCanEnter(z.x, ny, z.r)) z.y = ny;
 
@@ -812,10 +1042,33 @@ function updateZombies(dt) {
 function updateBullets(dt) {
   for (let i = bullets.length - 1; i >= 0; i--) {
     const b = bullets[i];
+    // homing chicks adjust velocity toward nearest zombie
+    if (b.homing) {
+      let near = null, bd2 = Infinity;
+      for (const z of zombies) {
+        const dx = z.x - b.x, dy = z.y - b.y;
+        const d2 = dx*dx + dy*dy;
+        if (d2 < bd2) { bd2 = d2; near = z; }
+      }
+      if (near) {
+        const tgtA = Math.atan2(near.y - b.y, near.x - b.x);
+        const curA = Math.atan2(b.vy, b.vx);
+        let da = tgtA - curA;
+        while (da >  Math.PI) da -= Math.PI*2;
+        while (da < -Math.PI) da += Math.PI*2;
+        const turn = Math.sign(da) * Math.min(Math.abs(da), 9 * dt);
+        const newA = curA + turn;
+        const sp = Math.hypot(b.vx, b.vy);
+        b.vx = Math.cos(newA) * sp;
+        b.vy = Math.sin(newA) * sp;
+      }
+    }
     b.x += b.vx * dt;
     b.y += b.vy * dt;
     b.life -= dt;
     if (b.life <= 0 || b.x < -20 || b.x > W + 20 || b.y < -20 || b.y > H + 20) {
+      // banana drops a slick where it dies
+      if (b.leavesSlick && b.x > 0 && b.x < W && b.y > 0 && b.y < H) addSlick(b.x, b.y);
       bullets.splice(i, 1);
       continue;
     }
@@ -828,6 +1081,7 @@ function updateBullets(dt) {
       if (dx*dx + dy*dy < rr*rr) {
         if (b.explosive) {
           explode(b.x, b.y, b.blastR, b.damage + b.blastDmg);
+          if (b.spawnChicks > 0) spawnChicks(b.x, b.y, b.spawnChicks, b.damage * 0.5);
           consumed = true;
           break;
         }
@@ -840,14 +1094,78 @@ function updateBullets(dt) {
           dropCoinsFor(z);
           tryDropGun(z);
           tryDropPickup(z);
-          if (z.isBoss) shake(18);
+          if (z.isBoss) { shake(18); spawnBossChest(z.x, z.y); }
           zombies.splice(j, 1);
+        }
+        // rubber duck: bounce off the zombie instead of being consumed
+        if (b.bounces > 0) {
+          b.bounces--;
+          b.damage *= 0.75;
+          b.hits.clear();
+          const sp = Math.hypot(b.vx, b.vy);
+          const newA = Math.atan2(b.vy, b.vx) + (Math.random() - 0.5) * 1.8 + Math.PI; // mostly reversed + scatter
+          b.vx = Math.cos(newA) * sp;
+          b.vy = Math.sin(newA) * sp;
+          // tiny squeak puff
+          for (let k = 0; k < 5; k++) {
+            const a = Math.random() * Math.PI * 2;
+            const s = 60 + Math.random() * 120;
+            particles.push({ x: b.x, y: b.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s, life: 0.3, color: '#fff5b8' });
+          }
+          break;
+        }
+        // banana: leave a slick where it lands
+        if (b.leavesSlick) {
+          addSlick(b.x, b.y);
         }
         if (b.pierce <= 0) { consumed = true; break; }
         b.pierce--;
       }
     }
     if (consumed) bullets.splice(i, 1);
+  }
+}
+
+function addSlick(x, y) {
+  slicks.push({ x, y, r: 24, life: 8, max: 8, ang: Math.random() * Math.PI * 2 });
+}
+
+function updateSlicks(dt) {
+  for (let i = slicks.length - 1; i >= 0; i--) {
+    slicks[i].life -= dt;
+    if (slicks[i].life <= 0) slicks.splice(i, 1);
+  }
+}
+
+// Used by the Chicken Launcher: small homing chicks scatter from the explosion.
+function spawnChicks(x, y, n, dmg) {
+  for (let i = 0; i < n; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const sp = 260 + Math.random() * 120;
+    bullets.push({
+      x, y,
+      vx: Math.cos(a) * sp,
+      vy: Math.sin(a) * sp,
+      damage: Math.max(4, dmg),
+      pierce: 0,
+      hits: new Set(),
+      life: 0.9,
+      color: '#fff5b8',
+      explosive: false,
+      blastR: 0,
+      blastDmg: 0,
+      bulletKind: 'chick',
+      homing: true,
+      bounces: 0,
+      leavesSlick: false,
+      spawnChicks: 0,
+    });
+  }
+  // burst of feathers
+  for (let i = 0; i < 24; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const sp = 60 + Math.random() * 200;
+    particles.push({ x, y, vx: Math.cos(a)*sp, vy: Math.sin(a)*sp, life: 0.7 + Math.random()*0.4, color: i % 2 ? '#fff5b8' : '#ffe066' });
   }
 }
 
@@ -1021,6 +1339,9 @@ function hardReset() {
   guns.length = 0;
   crates.length = 0;
   pickups.length = 0;
+  slicks.length = 0;
+  chests.length = 0;
+  floaters.length = 0;
   decals.length = 0;
   shakeAmt = 0; flashRed = 0; nearbyGun = null;
   player.weapon = 'pistol';
@@ -1061,6 +1382,35 @@ function render() {
     ctx.beginPath(); ctx.arc(d.x, d.y, d.r, 0, Math.PI*2); ctx.fill();
   }
   ctx.globalAlpha = 1;
+
+  // banana slicks
+  for (const s of slicks) {
+    const a = Math.min(1, s.life / 2);
+    ctx.save();
+    ctx.translate(s.x, s.y);
+    ctx.rotate(s.ang);
+    ctx.globalAlpha = a * 0.85;
+    // smear underlayer (slippery sheen)
+    ctx.fillStyle = '#ffe98a';
+    ctx.beginPath(); ctx.ellipse(0, 0, s.r * 0.95, s.r * 0.55, 0, 0, Math.PI*2); ctx.fill();
+    // banana peel shape on top
+    ctx.fillStyle = '#ffd942';
+    ctx.beginPath();
+    ctx.moveTo(-s.r * 0.9, 2);
+    ctx.quadraticCurveTo(-s.r * 0.4, -s.r * 0.55, s.r * 0.5, -s.r * 0.3);
+    ctx.quadraticCurveTo(s.r * 0.95, 0, s.r * 0.45, s.r * 0.4);
+    ctx.quadraticCurveTo(-s.r * 0.4, s.r * 0.55, -s.r * 0.9, 2);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = '#a07e1c';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    // little stem
+    ctx.fillStyle = '#6a4a0a';
+    ctx.fillRect(s.r * 0.55, -3, 4, 3);
+    ctx.restore();
+    ctx.globalAlpha = 1;
+  }
 
   // shop zone
   ctx.fillStyle = 'rgba(96, 140, 220, 0.10)';
@@ -1155,8 +1505,7 @@ function render() {
 
   // bullets
   for (const b of bullets) {
-    ctx.fillStyle = b.color || '#ffe066';
-    ctx.beginPath(); ctx.arc(b.x, b.y, b.explosive ? 5 : 3, 0, Math.PI*2); ctx.fill();
+    drawBullet(b);
   }
 
   // money crates
@@ -1198,6 +1547,52 @@ function render() {
     ctx.textAlign = 'center';
     ctx.fillText('$', cr.x, cy + 5);
     ctx.textAlign = 'left';
+  }
+
+  // boss-defeat chests
+  for (const c of chests) {
+    const bob = Math.sin(gameTime * 2.4 + c.x * 0.07) * 1.6;
+    const pulse = 1 + Math.sin(gameTime * 5) * 0.12;
+    const cy = c.y + bob;
+    // strong aura — this is a big reward
+    const aura = ctx.createRadialGradient(c.x, cy, 4, c.x, cy, 44 * pulse);
+    aura.addColorStop(0, 'rgba(255, 220, 110, 0.6)');
+    aura.addColorStop(1, 'rgba(255, 220, 110, 0)');
+    ctx.fillStyle = aura;
+    ctx.beginPath(); ctx.arc(c.x, cy, 44 * pulse, 0, Math.PI*2); ctx.fill();
+    // wooden chest base
+    ctx.fillStyle = '#5a3a14';
+    ctx.fillRect(c.x - 18, cy - 6, 36, 18);
+    ctx.strokeStyle = '#2a1808';
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(c.x - 18, cy - 6, 36, 18);
+    // lid (rounded)
+    ctx.fillStyle = '#7a4e1c';
+    ctx.beginPath();
+    ctx.moveTo(c.x - 18, cy - 4);
+    ctx.quadraticCurveTo(c.x, cy - 16, c.x + 18, cy - 4);
+    ctx.lineTo(c.x + 18, cy);
+    ctx.lineTo(c.x - 18, cy);
+    ctx.closePath();
+    ctx.fill(); ctx.stroke();
+    // gold bands
+    ctx.fillStyle = '#ffce44';
+    ctx.fillRect(c.x - 18, cy - 1, 36, 2);
+    ctx.fillRect(c.x - 18, cy + 9, 36, 2);
+    // gold lock
+    ctx.fillStyle = '#ffe066';
+    ctx.fillRect(c.x - 4, cy + 2, 8, 6);
+    ctx.strokeStyle = '#8a6c12';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(c.x - 4, cy + 2, 8, 6);
+    // keyhole
+    ctx.fillStyle = '#1a1a1a';
+    ctx.beginPath(); ctx.arc(c.x, cy + 4.5, 1, 0, Math.PI*2); ctx.fill();
+    // little sparkle on the lid
+    ctx.fillStyle = '#fff5b8';
+    const sx = c.x - 6 + Math.sin(gameTime * 2) * 2;
+    const sy2 = cy - 8 + Math.cos(gameTime * 2) * 1;
+    ctx.beginPath(); ctx.arc(sx, sy2, 1.6, 0, Math.PI*2); ctx.fill();
   }
 
   // gun pickups
@@ -1316,6 +1711,20 @@ function render() {
     ctx.rotate(facing);
     drawGun(player.weapon, player.r);
     ctx.restore();
+  }
+
+  // floating reward text (above everything in the world)
+  for (const f of floaters) {
+    const a = Math.max(0, Math.min(1, f.life / 1.2));
+    ctx.font = 'bold 13px system-ui';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = `rgba(0,0,0,${0.7 * a})`;
+    ctx.fillText(f.text, f.x + 1, f.y + 1);
+    ctx.fillStyle = f.color;
+    ctx.globalAlpha = a;
+    ctx.fillText(f.text, f.x, f.y);
+    ctx.globalAlpha = 1;
+    ctx.textAlign = 'left';
   }
 
   // end world (shake) layer
@@ -1699,6 +2108,9 @@ function tick() {
   updateGuns(dt);
   updateCrates(dt);
   updatePickups(dt);
+  updateSlicks(dt);
+  updateChests(dt);
+  updateFloaters(dt);
   updateParticles(dt);
   updateDecals(dt);
   updateWave(dt);
