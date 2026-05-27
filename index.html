@@ -56,17 +56,19 @@ let musicTargetState = null;
 
 function ensureMusic() {
   if (musicMaster || !audioCtx) return;
-  // Master is kept quiet so the SFX cut through cleanly
+  // Master controls overall music level (still well below SFX so they punch through)
   musicMaster = audioCtx.createGain();
-  musicMaster.gain.value = 0.18;
+  musicMaster.gain.value = soundMuted ? 0 : 0.45;
   musicMaster.connect(audioCtx.destination);
+
+  const startAt = audioCtx.currentTime + 0.05;
 
   // CALM PADS — a soft minor chord with slow LFO detune. Used outside gameplay.
   musicMenuGain = audioCtx.createGain();
-  musicMenuGain.gain.value = 0;
+  musicMenuGain.gain.setValueAtTime(0, audioCtx.currentTime);
   const menuLP = audioCtx.createBiquadFilter();
   menuLP.type = 'lowpass';
-  menuLP.frequency.value = 1400;
+  menuLP.frequency.value = 1600;
   menuLP.connect(musicMenuGain);
   musicMenuGain.connect(musicMaster);
   for (const freq of [110, 164.81, 220, 329.63]) { // A2, E3, A3, E4 — open + airy
@@ -81,19 +83,19 @@ function ensureMusic() {
     lfo.connect(lfoAmt);
     lfoAmt.connect(osc.frequency);
     const oscGain = audioCtx.createGain();
-    oscGain.gain.value = 0.22;
+    oscGain.gain.value = 0.42;
     osc.connect(oscGain);
     oscGain.connect(menuLP);
-    osc.start();
-    lfo.start();
+    osc.start(startAt);
+    lfo.start(startAt);
   }
 
   // COMBAT — low sawtooth drone + a heartbeat-pulse sub bass. Used while playing.
   musicCombatGain = audioCtx.createGain();
-  musicCombatGain.gain.value = 0;
+  musicCombatGain.gain.setValueAtTime(0, audioCtx.currentTime);
   const combatLP = audioCtx.createBiquadFilter();
   combatLP.type = 'lowpass';
-  combatLP.frequency.value = 520;
+  combatLP.frequency.value = 620;
   combatLP.connect(musicCombatGain);
   musicCombatGain.connect(musicMaster);
   for (const freq of [55, 82.5, 110, 138.59]) { // A1, E2, A2, C#3
@@ -101,28 +103,28 @@ function ensureMusic() {
     osc.type = 'sawtooth';
     osc.frequency.value = freq;
     const oscGain = audioCtx.createGain();
-    oscGain.gain.value = 0.18;
+    oscGain.gain.value = 0.30;
     osc.connect(oscGain);
     oscGain.connect(combatLP);
-    osc.start();
+    osc.start(startAt);
   }
   // pulsing heartbeat — square wave LFO on a sub-bass gain
   const heart = audioCtx.createOscillator();
   heart.type = 'sine';
   heart.frequency.value = 41.2; // E1
   const heartGain = audioCtx.createGain();
-  heartGain.gain.value = 0;
+  heartGain.gain.value = 0.25;
   const pulse = audioCtx.createOscillator();
   pulse.type = 'square';
   pulse.frequency.value = 1.2; // ~72 BPM
   const pulseAmt = audioCtx.createGain();
-  pulseAmt.gain.value = 0.18;
+  pulseAmt.gain.value = 0.25;
   pulse.connect(pulseAmt);
   pulseAmt.connect(heartGain.gain);
   heart.connect(heartGain);
   heartGain.connect(combatLP);
-  heart.start();
-  pulse.start();
+  heart.start(startAt);
+  pulse.start(startAt);
 }
 
 // Crossfade between calm/combat layers based on the active game state.
@@ -130,10 +132,14 @@ function updateMusicForState() {
   if (!musicMaster) return;
   const inCombat = (gameState === 'playing');
   if (musicTargetState === inCombat) return;
+  const firstCall = musicTargetState === null;
   musicTargetState = inCombat;
   const t = audioCtx.currentTime;
-  const fade = 2.2;
-  // Defensive: cancel any in-flight ramps and pin current values
+  // Snap in on the first transition so the player hears something immediately;
+  // every subsequent transition uses a smooth crossfade.
+  const fade = firstCall ? 0.6 : 2.2;
+  // Defensive: cancel any in-flight ramps and pin current values so the next
+  // ramp has a defined starting point (linearRamp requires this).
   for (const g of [musicMenuGain, musicCombatGain]) {
     g.gain.cancelScheduledValues(t);
     g.gain.setValueAtTime(g.gain.value, t);
@@ -154,7 +160,7 @@ function applyMusicMute() {
   const t = audioCtx.currentTime;
   musicMaster.gain.cancelScheduledValues(t);
   musicMaster.gain.setValueAtTime(musicMaster.gain.value, t);
-  musicMaster.gain.linearRampToValueAtTime(soundMuted ? 0 : 0.18, t + 0.4);
+  musicMaster.gain.linearRampToValueAtTime(soundMuted ? 0 : 0.45, t + 0.4);
 }
 // Quick tone with linear attack + exponential decay; optional pitch sweep.
 function tone({ freq = 440, type = 'square', dur = 0.1, vol = 0.3, sweep = 0, delay = 0, attack = 0.005 } = {}) {
@@ -1198,7 +1204,7 @@ addEventListener('keydown', e => {
     if (e.code === 'Digit3') { pickCard(2); return; }
     return;
   }
-  if (e.code === 'Space' && intermission > 0) {
+  if (e.code === 'Space' && intermission > 0 && !trainingMode) {
     intermission = 0;
     beginNextWave();
     e.preventDefault();
@@ -1313,7 +1319,7 @@ c.addEventListener('mousedown', e => {
       }
     }
   }
-  if (intermission > 0 && pointInRect(mouse, skipBtn)) {
+  if (intermission > 0 && !trainingMode && pointInRect(mouse, skipBtn)) {
     intermission = 0;
     beginNextWave();
     return;
@@ -1693,6 +1699,9 @@ function pickCard(idx) {
 }
 
 function updateWave(dt) {
+  // Training Arena has no wave system — the player only fights what they
+  // explicitly spawn via cheats.
+  if (trainingMode) return;
   // Card pick blocks the wave from starting — perk first, then manual start.
   if (pendingCards) return;
   if (intermission > 0) {
@@ -4371,8 +4380,9 @@ function drawWaveBanner() {
     }
   }
   // Intermission countdown — center of screen, big.
-  // While a perk pick is pending, the card UI takes over this space, so skip it here.
-  if (intermission > 0 && !pendingCards) {
+  // Skip it in training mode (no waves) and while a perk pick is pending
+  // (the card UI takes over this screen space).
+  if (intermission > 0 && !pendingCards && !trainingMode) {
     ctx.fillStyle = 'rgba(0,0,0,0.42)';
     const tw = 400, th = 80;
     ctx.fillRect((W - tw) / 2, H / 2 - th / 2 - 100, tw, th);
@@ -4435,7 +4445,8 @@ function drawHud() {
   ctx.fillStyle = '#9aa0ab';
   ctx.font = '11px system-ui';
   let sub;
-  if (intermission > 0)              sub = `Press SPACE to start`;
+  if (trainingMode)                  sub = `Training · use cheats to spawn`;
+  else if (intermission > 0)         sub = `Press SPACE to start`;
   else if (waveZombiesToSpawn > 0)   sub = `${waveZombiesToSpawn + zombies.length} left`;
   else                               sub = `${zombies.length} left`;
   ctx.fillText(sub, 14, 94);
