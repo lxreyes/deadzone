@@ -63,9 +63,27 @@ const bullets = [];
 const zombies = [];
 const coins = [];
 const particles = [];
-const guns   = []; // { x, y, weapon, life }
-const crates = []; // { x, y, value, life }
-const decals = []; // blood splats on the floor
+const guns    = []; // { x, y, weapon, life }
+const crates  = []; // { x, y, value, life }
+const pickups = []; // { x, y, type, life }
+const decals  = []; // blood splats on the floor
+
+// Random pickup definitions. apply() runs when the player walks over one.
+const PICKUP_TYPES = {
+  health: { name: 'Health',     symbol: '+', color: '#5cd86b',
+    apply() { player.hp = Math.min(player.maxHp, player.hp + 40); } },
+  shield: { name: 'Shield',     symbol: 'S', color: '#7ec8ff',
+    apply() { player.buffs.shield = 1; } },
+  triple: { name: 'Triple',     symbol: '3', color: '#c47eff',
+    apply() { player.buffs.triple = 10; } },
+  rapid:  { name: 'Rapid Fire', symbol: 'F', color: '#ffe066',
+    apply() { player.buffs.rapid = 10; } },
+  speed:  { name: 'Speed',      symbol: '»', color: '#5cffec',
+    apply() { player.buffs.fast = 10; } },
+  bomb:   { name: 'Bomb',       symbol: 'X', color: '#ff8040',
+    apply() { detonateNuke(player.x, player.y); } },
+};
+const PICKUP_KEYS = Object.keys(PICKUP_TYPES);
 
 // Visual / interaction state
 let nearbyGun = null;     // gun pickup the player is hovering over
@@ -98,6 +116,11 @@ const cheats = [
       beginNextWave();
     } },
   { label: 'Spawn Boss', run() { spawnBoss(); } },
+  { label: '+Pickup', run() {
+      const type = PICKUP_KEYS[Math.floor(Math.random() * PICKUP_KEYS.length)];
+      const a = Math.random() * Math.PI * 2;
+      spawnPickupAt(player.x + Math.cos(a) * 50, player.y + Math.sin(a) * 50, type);
+    } },
   { label: 'Max Upgrades', run() {
       for (const u of upgrades) if (u.type === 'perm') u.buy();
       player.hp = player.maxHp;
@@ -301,20 +324,7 @@ const upgrades = [
   { name: 'Rapid Fire 15s', type: 'temp', cost: 32,
     buy() { player.buffs.rapid = 15; } },
   { name: 'Nuke (clear)',   type: 'temp', cost: 70,
-    buy() {
-      // explosion particles + kill all zombies
-      for (const z of zombies) {
-        kills++;
-        spawnDeathParticles(z.x, z.y, z.color);
-        dropCoinsFor(z);
-      }
-      zombies.length = 0;
-      for (let i = 0; i < 40; i++) {
-        const a = Math.random() * Math.PI * 2;
-        const s = 200 + Math.random() * 300;
-        particles.push({ x: player.x, y: player.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s, life: 0.6, color: '#ffd166' });
-      }
-    } },
+    buy() { detonateNuke(player.x, player.y); } },
 ];
 
 function inShop() {
@@ -468,6 +478,9 @@ function beginNextWave() {
   // each wave gets a free money crate somewhere in the arena
   spawnMoneyCrate();
   if (wave > 0 && wave % 5 === 0) spawnMoneyCrate(); // bonus every 5 waves
+  // ...and a random pickup
+  spawnRandomPickup();
+  if (wave > 0 && wave % 5 === 0) spawnRandomPickup(); // bonus every 5 waves
 }
 
 function endCurrentWave() {
@@ -547,6 +560,7 @@ function explode(x, y, radius, dmg) {
         addBlood(z.x, z.y, z.isBoss ? 2 : 1);
         dropCoinsFor(z);
         tryDropGun(z);
+        tryDropPickup(z);
         zombies.splice(j, 1);
       }
     }
@@ -557,6 +571,71 @@ function explode(x, y, radius, dmg) {
     particles.push({ x, y, vx: Math.cos(a)*s, vy: Math.sin(a)*s, life: 0.5 + Math.random()*0.3, color: '#ff8040' });
   }
   shake(14);
+}
+
+function detonateNuke(x, y) {
+  for (const z of zombies) {
+    kills++;
+    spawnDeathParticles(z.x, z.y, z.color);
+    addBlood(z.x, z.y, z.isBoss ? 2 : 1);
+    dropCoinsFor(z);
+  }
+  zombies.length = 0;
+  for (let i = 0; i < 40; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const s = 200 + Math.random() * 300;
+    particles.push({ x, y, vx: Math.cos(a)*s, vy: Math.sin(a)*s, life: 0.6, color: '#ffd166' });
+  }
+  shake(20);
+  flashRed = Math.max(flashRed, 0.25);
+}
+
+function spawnPickupAt(x, y, type) {
+  if (!PICKUP_TYPES[type]) return;
+  pickups.push({ x, y, type, life: 30 });
+}
+
+function spawnRandomPickup() {
+  const type = PICKUP_KEYS[Math.floor(Math.random() * PICKUP_KEYS.length)];
+  for (let tries = 0; tries < 25; tries++) {
+    const x = 80 + Math.random() * (W - 160);
+    const y = 80 + Math.random() * (H - 160);
+    if (x > shop.x - 20 && x < shop.x + shop.w + 20 &&
+        y > shop.y - 20 && y < shop.y + shop.h + 20) continue;
+    if (Math.hypot(x - player.x, y - player.y) < 140) continue;
+    spawnPickupAt(x, y, type);
+    return;
+  }
+}
+
+function tryDropPickup(z) {
+  let chance = 0;
+  if (z.isBoss)            chance = 1.0;
+  else if (z.type === 'tank') chance = 0.18;
+  else if (z.type === 'fast') chance = 0.09;
+  else                     chance = 0.05;
+  if (Math.random() >= chance) return;
+  const type = PICKUP_KEYS[Math.floor(Math.random() * PICKUP_KEYS.length)];
+  spawnPickupAt(z.x, z.y, type);
+}
+
+function updatePickups(dt) {
+  for (let i = pickups.length - 1; i >= 0; i--) {
+    const p = pickups[i];
+    p.life -= dt;
+    if (p.life <= 0) { pickups.splice(i, 1); continue; }
+    const def = PICKUP_TYPES[p.type];
+    const dx = player.x - p.x, dy = player.y - p.y;
+    if (dx*dx + dy*dy < (player.r + 14) * (player.r + 14)) {
+      def.apply();
+      for (let k = 0; k < 18; k++) {
+        const a = Math.random() * Math.PI * 2;
+        const s = 100 + Math.random() * 200;
+        particles.push({ x: p.x, y: p.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s, life: 0.55, color: def.color });
+      }
+      pickups.splice(i, 1);
+    }
+  }
 }
 
 function tryDropGun(z) {
@@ -666,6 +745,7 @@ function updateBullets(dt) {
           addBlood(z.x, z.y, z.isBoss ? 2 : 1);
           dropCoinsFor(z);
           tryDropGun(z);
+          tryDropPickup(z);
           if (z.isBoss) shake(18);
           zombies.splice(j, 1);
         }
@@ -833,8 +913,10 @@ function hardReset() {
   player.speed = 220;
   player.damage = 10;
   player.fireRate = 4;
+  player.bulletSpeed = 700;
   player.pierce = 0;
   player.invuln = 0;
+  player.lastShot = 0;
   for (const k in player.buffs) player.buffs[k] = 0;
   bullets.length = 0;
   zombies.length = 0;
@@ -842,6 +924,7 @@ function hardReset() {
   particles.length = 0;
   guns.length = 0;
   crates.length = 0;
+  pickups.length = 0;
   decals.length = 0;
   shakeAmt = 0; flashRed = 0; nearbyGun = null;
   player.weapon = 'pistol';
@@ -1000,6 +1083,33 @@ function render() {
     ctx.font = 'bold 14px system-ui';
     ctx.textAlign = 'center';
     ctx.fillText(w.tag, g.x, g.y + 5 + bob);
+    ctx.textAlign = 'left';
+  }
+
+  // random pickups
+  for (const p of pickups) {
+    const def = PICKUP_TYPES[p.type];
+    const flash = p.life < 5 && Math.floor(p.life * 6) % 2 === 0;
+    const bob = Math.sin(gameTime * 3.4 + p.x * 0.13) * 2.5;
+    const pulse = 1 + Math.sin(gameTime * 4 + p.x) * 0.08;
+    // aura
+    const auraR = 22 * pulse;
+    const aura = ctx.createRadialGradient(p.x, p.y + bob, 3, p.x, p.y + bob, auraR);
+    aura.addColorStop(0, def.color + 'cc');
+    aura.addColorStop(1, def.color + '00');
+    ctx.fillStyle = aura;
+    ctx.beginPath(); ctx.arc(p.x, p.y + bob, auraR, 0, Math.PI*2); ctx.fill();
+    // body — circle to distinguish from square gun pickups
+    ctx.fillStyle = flash ? '#fff' : def.color;
+    ctx.beginPath(); ctx.arc(p.x, p.y + bob, 11, 0, Math.PI*2); ctx.fill();
+    ctx.strokeStyle = '#1a1a1a';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    // icon
+    ctx.fillStyle = '#1a1a1a';
+    ctx.font = 'bold 14px system-ui';
+    ctx.textAlign = 'center';
+    ctx.fillText(def.symbol, p.x, p.y + 5 + bob);
     ctx.textAlign = 'left';
   }
 
@@ -1430,6 +1540,7 @@ function tick() {
   updateCoins(dt);
   updateGuns(dt);
   updateCrates(dt);
+  updatePickups(dt);
   updateParticles(dt);
   updateDecals(dt);
   updateWave(dt);
