@@ -560,33 +560,38 @@ const player = {
 // Weapon definitions. Multipliers stack on top of player base stats.
 // shots/spread/damage/fireRate/bulletSpeed are multipliers (or extras for shots).
 const WEAPONS = {
-  pistol:  { name: 'Pistol',   shots: 1, spread: 0.00, damage: 1.0, fireRate: 1.0, bulletSpeed: 1.0, pierce: 0, life: 1.4, color: '#ffe066', tag: 'P' },
-  shotgun: { name: 'Shotgun',  shots: 5, spread: 0.20, damage: 0.55, fireRate: 0.55, bulletSpeed: 0.95, pierce: 0, life: 0.55, color: '#ff9d3a', tag: 'S' },
-  smg:     { name: 'SMG',      shots: 1, spread: 0.08, damage: 0.55, fireRate: 2.6, bulletSpeed: 1.05, pierce: 0, life: 1.2, color: '#7ec8ff', tag: 'M' },
-  rifle:   { name: 'Rifle',    shots: 1, spread: 0.00, damage: 2.6,  fireRate: 0.55, bulletSpeed: 1.55, pierce: 2, life: 1.6, color: '#9bf07a', tag: 'R' },
-  rocket:  { name: 'Rocket',   shots: 1, spread: 0.00, damage: 1.5, fireRate: 0.45, bulletSpeed: 0.75, pierce: 0, life: 1.6, color: '#ff5050', tag: 'X', explosive: true, blastR: 70, blastDmg: 30 },
+  pistol:  { name: 'Pistol',   shots: 1, spread: 0.00, damage: 1.0, fireRate: 1.0, bulletSpeed: 1.0, pierce: 0, life: 1.4, color: '#ffe066', tag: 'P', desc: 'Balanced starting sidearm' },
+  shotgun: { name: 'Shotgun',  shots: 5, spread: 0.20, damage: 0.55, fireRate: 0.55, bulletSpeed: 0.95, pierce: 0, life: 0.55, color: '#ff9d3a', tag: 'S', desc: '5-bullet spread; best up close' },
+  smg:     { name: 'SMG',      shots: 1, spread: 0.08, damage: 0.55, fireRate: 2.6, bulletSpeed: 1.05, pierce: 0, life: 1.2, color: '#7ec8ff', tag: 'M', desc: 'Very fast fire, low per-bullet damage' },
+  rifle:   { name: 'Rifle',    shots: 1, spread: 0.00, damage: 2.6,  fireRate: 0.55, bulletSpeed: 1.55, pierce: 2, life: 1.6, color: '#9bf07a', tag: 'R', desc: 'Slow heavy shot; pierces 2 zombies' },
+  rocket:  { name: 'Rocket',   shots: 1, spread: 0.00, damage: 1.5, fireRate: 0.45, bulletSpeed: 0.75, pierce: 0, life: 1.6, color: '#ff5050', tag: 'X', explosive: true, blastR: 70, blastDmg: 30, desc: 'Explosive shell; splash damage on impact' },
   // Gag weapons
   chicken: { name: 'Chicken Launcher', shots: 1, spread: 0.05, damage: 1.2, fireRate: 0.5, bulletSpeed: 0.55, pierce: 0, life: 1.8, color: '#ffe066', tag: 'C',
-             explosive: true, blastR: 70, blastDmg: 18, bulletKind: 'chicken', spawnChicks: 6 },
+             explosive: true, blastR: 70, blastDmg: 18, bulletKind: 'chicken', spawnChicks: 6,
+             desc: 'Explodes into homing chicks on impact' },
   banana:  { name: 'Banana Cannon',    shots: 1, spread: 0.06, damage: 0.85, fireRate: 1.5, bulletSpeed: 1.0, pierce: 3, life: 1.4, color: '#ffd942', tag: 'B',
-             bulletKind: 'banana', leavesSlick: true },
+             bulletKind: 'banana', leavesSlick: true,
+             desc: 'Pierces 3; leaves slippery peels' },
   duck:    { name: 'Rubber Duck',      shots: 1, spread: 0.04, damage: 0.9, fireRate: 1.6, bulletSpeed: 1.05, pierce: 0, life: 2.0, color: '#ffcc66', tag: 'D',
-             bulletKind: 'duck', bounces: 3 },
+             bulletKind: 'duck', bounces: 3,
+             desc: 'Bullets bounce off zombies 3 times' },
   // Special-ability guns
   plus:    { name: 'Plus Shooter',     shots: 4, spread: 0, damage: 0.9, fireRate: 1.2, bulletSpeed: 1.0, pierce: 1, life: 1.0, color: '#80ffe0', tag: '+',
-             pattern: 'plus' },
+             pattern: 'plus', desc: 'Fires 4 bullets in a + pattern' },
   tesla:   { name: 'Tesla Coil',       shots: 1, spread: 0.04, damage: 1.1, fireRate: 1.0, bulletSpeed: 1.25, pierce: 0, life: 1.2, color: '#7ec8ff', tag: 'T',
-             bulletKind: 'lightning', chains: 3, chainRange: 150 },
+             bulletKind: 'lightning', chains: 3, chainRange: 150,
+             desc: 'Bullets chain to nearby zombies' },
   orbit:   { name: 'Orbiter',          shots: 3, spread: 0, damage: 0.7, fireRate: 0.5, bulletSpeed: 1.0, pierce: 99, life: 3.2, color: '#c47eff', tag: 'O',
-             pattern: 'orbit', orbitRadius: 70, orbitSpeed: 4.5 },
+             pattern: 'orbit', orbitRadius: 70, orbitSpeed: 4.5,
+             desc: '3 bullets orbit around you' },
   rail:    { name: 'Railgun',          shots: 1, spread: 0, damage: 6.5, fireRate: 0.55, bulletSpeed: 5.5, pierce: 99, life: 0.5, color: '#9bf0ff', tag: '=',
-             bulletKind: 'rail' },
+             bulletKind: 'rail', desc: 'Instant beam; pierces everything' },
   twin:    { name: 'Twin Pistols',     shots: 2, spread: 0.0, damage: 0.75, fireRate: 1.4, bulletSpeed: 1.0, pierce: 0, life: 1.4, color: '#ffb070', tag: '2',
-             pattern: 'twin' },
+             pattern: 'twin', desc: 'Two parallel shots per trigger pull' },
   crossbow:{ name: 'Crossbow',         shots: 1, spread: 0, damage: 3.6, fireRate: 0.6, bulletSpeed: 1.3, pierce: 5, life: 1.8, color: '#a06a2a', tag: '^',
-             bulletKind: 'bolt' },
+             bulletKind: 'bolt', desc: 'Heavy bolt; pierces 5 zombies' },
   flame:   { name: 'Flamethrower',     shots: 3, spread: 0.28, damage: 0.45, fireRate: 6.0, bulletSpeed: 0.7, pierce: 0, life: 0.35, color: '#ff8030', tag: 'f',
-             bulletKind: 'flame' },
+             bulletKind: 'flame', desc: 'Short-range stream of flame' },
 };
 const DROPPABLE_WEAPONS = ['shotgun', 'smg', 'rifle', 'rocket', 'chicken', 'banana', 'duck', 'plus', 'tesla', 'orbit', 'rail', 'twin', 'crossbow', 'flame'];
 
@@ -596,41 +601,47 @@ const DROPPABLE_WEAPONS = ['shotgun', 'smg', 'rifle', 'rocket', 'chicken', 'bana
 //   chakram = spinning disc that loops back to the player
 const SECONDARIES = {
   katana:  { name: 'Katana',  kind: 'melee',     cooldown: 0.45, damage: 50, color: '#e8edf4', tag: 'K',
-             hitShape: 'arc', range: 80, arc: Math.PI * 0.65, knockback: 90 },
+             hitShape: 'arc', range: 80, arc: Math.PI * 0.65, knockback: 90,
+             desc: 'Fast arc slash in front of you' },
   warhammer:{ name: 'Warhammer', kind: 'melee', cooldown: 0.95, damage: 38, color: '#9aa0ab', tag: 'W',
-             hitShape: 'circle', range: 50, circleR: 55, knockback: 380 },
+             hitShape: 'circle', range: 50, circleR: 55, knockback: 380,
+             desc: 'Circle smash — extreme knockback' },
   kunai:   { name: 'Kunai',   kind: 'thrown',    cooldown: 0.30, damage: 16, color: '#8aa0b4', tag: 'k',
-             shots: 3, spread: 0.16, speed: 920, life: 0.7, pierce: 1 },
+             shots: 3, spread: 0.16, speed: 920, life: 0.7, pierce: 1,
+             desc: 'Throws 3 piercing daggers' },
   chakram: { name: 'Chakram', kind: 'returning', cooldown: 1.20, damage: 24, color: '#ff8040', tag: 'C',
-             speed: 620, life: 2.6, pierce: 99, outTime: 0.55 },
+             speed: 620, life: 2.6, pierce: 99, outTime: 0.55,
+             desc: 'Sawblade that loops back to you' },
   // Utility tools (still bound to RMB / Q)
   medkit:  { name: 'Medkit',  kind: 'heal',      cooldown: 7.0, color: '#5cd86b', tag: '+',
-             heal: 45 },
+             heal: 45, desc: 'Heal 45 HP instantly' },
   decoy:   { name: 'Decoy',   kind: 'decoy',     cooldown: 5.0, color: '#ffce44', tag: 'd',
-             hp: 120, life: 9 },
+             hp: 120, life: 9, desc: 'Drops a lure that pulls zombie aggro' },
   emp:     { name: 'EMP',     kind: 'stun',      cooldown: 8.0, color: '#7ec8ff', tag: 'E',
-             radius: 220, duration: 3.0 },
+             radius: 220, duration: 3.0, desc: 'AoE slow on all nearby zombies' },
   // A grimoire that summons a chicken swarm to chase the nearest zombie.
   chickenTome: { name: 'Tome of Chickens', kind: 'summon', cooldown: 9.0, color: '#ffe066', tag: 'B',
-                 summon: 'chicken', count: 4 },
+                 summon: 'chicken', count: 4, desc: 'Summons 4 chickens that hunt zombies' },
   // Faster, more dangerous summons that bite once and fade quickly.
   batTome:     { name: 'Tome of Bats',     kind: 'summon', cooldown: 10.0, color: '#8a4ac0', tag: 'b',
-                 summon: 'bat',     count: 5 },
+                 summon: 'bat',     count: 5, desc: 'Summons 5 fast biting bats' },
   // Tanky pack — fewer summons but each hits hard and lives longer.
   wolfTome:    { name: 'Tome of Wolves',   kind: 'summon', cooldown: 14.0, color: '#7a5030', tag: 'w',
-                 summon: 'wolf',    count: 3 },
+                 summon: 'wolf',    count: 3, desc: '3 tanky wolves that hit hard' },
   // Swarm — many fragile summons that overwhelm by numbers.
   spiderTome:  { name: 'Tome of Spiders',  kind: 'summon', cooldown: 8.0,  color: '#222222', tag: 's',
-                 summon: 'spider',  count: 7 },
+                 summon: 'spider',  count: 7, desc: 'Swarm of 7 fast fragile spiders' },
   // Ethereal — fast, pierce-bullet-like; ignore obstacles, deal solid damage.
   spiritTome:  { name: 'Tome of Spirits',  kind: 'summon', cooldown: 9.0,  color: '#9bf0ff', tag: 'g',
-                 summon: 'spirit',  count: 4 },
+                 summon: 'spirit',  count: 4, desc: '4 fast ghostly orbs that home in' },
   // Drop a glowing pad that regenerates HP while you stand on it.
   healingField: { name: 'Healing Field', kind: 'field', cooldown: 14.0, color: '#5cd86b', tag: 'H',
-                  radius: 50, life: 8, hps: 12 },
+                  radius: 50, life: 8, hps: 12,
+                  desc: 'Places a pad that regens HP while you stand on it' },
   // Lob an explosive bomb in the aim direction; explodes on contact / expiry.
   bomb:    { name: 'Bomb Launcher', kind: 'launcher', cooldown: 2.4, color: '#d33', tag: 'B',
-             damage: 22, speed: 620, life: 1.3, blastR: 90, blastDmg: 28 },
+             damage: 22, speed: 620, life: 1.3, blastR: 90, blastDmg: 28,
+             desc: 'Lobs an explosive shell forward' },
   // Briefly slow every active zombie — defensive panic button.
   slowtime: { name: 'Time Slow', kind: 'slowtime', cooldown: 12.0, color: '#c47eff', tag: 't',
               duration: 4.0 },
@@ -779,6 +790,7 @@ let trainingMode = false;
 let hasGame = false; // set true after first Play/Training; controls Resume visibility
 let menuButtons = [];     // populated by the active menu draw fn each frame
 let settingsView = 'main'; // 'main' or 'sprites'
+let tutorialPage = 0;     // which page of the How to Play overlay is showing
 
 // ---------- Upgrade tree (bought with EXP from zombie kills, T to open) ----------
 // Three branches, four upgrades per branch, bought in order. Each upgrade
@@ -817,6 +829,61 @@ const TREE_BRANCHES = Object.keys(UPGRADE_TREE);
 // How many nodes have been bought in each branch (0 = next one available).
 let treeLevels = { combat: 0, survival: 0, economy: 0 };
 let pendingBossDeath = null; // queued boss-kill nuke processed at tick boundary
+
+// ---------- Tooltip popups (shown once per session per item) ----------
+const tooltips = [];      // active info cards — { x, y, title, body, color, life, max }
+const seenTooltips = new Set(); // ids we've already explained this session
+function showTooltip(id, title, body, color) {
+  if (seenTooltips.has(id)) return;
+  seenTooltips.add(id);
+  tooltips.push({
+    x: player.x, y: player.y,
+    title, body, color: color || '#7ec8ff',
+    life: 5.0, max: 5.0,
+  });
+}
+function updateTooltips(dt) {
+  for (let i = tooltips.length - 1; i >= 0; i--) {
+    tooltips[i].life -= dt;
+    if (tooltips[i].life <= 0) tooltips.splice(i, 1);
+  }
+}
+function drawTooltips() {
+  for (const t of tooltips) {
+    const lines = t.body.split('\n');
+    const w = 240, lineH = 14;
+    const h = 26 + lines.length * lineH + 10;
+    const fade = Math.min(1, t.life / 1.0); // last second fades out
+    // Anchor above the player position from when it was shown, but clamp so it
+    // stays fully visible.
+    const x = Math.max(10, Math.min(W - w - 10, t.x - w / 2));
+    const y = Math.max(10, Math.min(H - h - 10, t.y - h - 32));
+    ctx.save();
+    ctx.globalAlpha = fade;
+    ctx.fillStyle = 'rgba(10, 12, 18, 0.94)';
+    ctx.fillRect(x, y, w, h);
+    ctx.strokeStyle = t.color;
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x, y, w, h);
+    // colored top stripe
+    ctx.fillStyle = t.color;
+    ctx.fillRect(x, y, w, 3);
+    // title
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 14px system-ui';
+    ctx.textAlign = 'left';
+    ctx.fillText(t.title, x + 12, y + 22);
+    // body lines
+    ctx.fillStyle = '#dfe2e8';
+    ctx.font = '11px system-ui';
+    let by = y + 22 + 16;
+    for (const line of lines) {
+      ctx.fillText(line, x + 12, by);
+      by += lineH;
+    }
+    ctx.restore();
+  }
+}
 
 // ---------- Active abilities (cycled with Tab / scroll wheel, fired with Shift) ----------
 const ABILITIES = {
@@ -1922,6 +1989,7 @@ addEventListener('keydown', e => {
     if (gameState === 'playing')       { gameState = 'paused'; clearKeys(); SFX.uiClick(); updateMusicForState(); return; }
     if (gameState === 'paused')        { gameState = 'playing'; SFX.uiClick(); updateMusicForState(); return; }
     if (gameState === 'settings')      { gameState = hasGame ? 'paused' : 'menu'; SFX.uiClick(); updateMusicForState(); return; }
+    if (gameState === 'tutorial')      { gameState = 'menu'; SFX.uiClick(); return; }
     if (gameState === 'tree')          { gameState = 'playing'; SFX.uiClick(); return; }
     if (gameState === 'menu')          return;
   }
@@ -2338,6 +2406,8 @@ function doSwapSecondary() {
   if (!nearbyBladeCrate) return;
   if (nearbyBladeCrate.secondary === player.secondary) return;
   const def = SECONDARIES[nearbyBladeCrate.secondary];
+  // First-time info popup for the equipped secondary
+  if (def) showTooltip('sec:' + nearbyBladeCrate.secondary, `${def.name} equipped`, def.desc || 'New secondary', def.color);
   const cx = nearbyBladeCrate.x, cy = nearbyBladeCrate.y;
   player.secondary = nearbyBladeCrate.secondary;
   player.lastSecondary = -10;
@@ -2831,6 +2901,8 @@ function updateAbilityBooks(dt) {
       selectedAbility = ABILITY_KEYS.indexOf(b.abilityId);
       const def = ABILITIES[b.abilityId];
       floaters.push({ x: b.x, y: b.y - 22, text: `ABILITY: ${def.name}`, life: 3.0, color: def.color });
+      showTooltip('abil:' + b.abilityId, `${def.name} unlocked`,
+        (def.desc || 'New ability') + '\nTab/scroll cycles · Shift fires', def.color);
       for (let k = 0; k < 22; k++) {
         const a = Math.random() * Math.PI * 2;
         const s = 80 + Math.random() * 200;
@@ -4070,6 +4142,9 @@ function doSwapWeapon() {
   if (!nearbyGun || nearbyGun.weapon === player.weapon) return;
   SFX.swap();
   const old = player.weapon;
+  // First-time info popup for the equipped gun
+  const def = WEAPONS[nearbyGun.weapon];
+  if (def) showTooltip('weapon:' + nearbyGun.weapon, `${def.name} equipped`, def.desc || 'New primary weapon', def.color);
   const gx = nearbyGun.x, gy = nearbyGun.y;
   const newCol = WEAPONS[nearbyGun.weapon].color;
   player.weapon = nearbyGun.weapon;
@@ -5115,6 +5190,7 @@ function render() {
   if (nearbyBladeCrate && nearbyBladeCrate.secondary !== player.secondary) drawBladeSwapPrompt();
   if (inShop()) drawShop();
   drawBuildToolbar();
+  drawTooltips();
   drawCardPicker(); // sits on top of everything when active
 }
 
@@ -5439,6 +5515,7 @@ function drawMainMenu() {
   if (showResume) buttons.push({ id: 'resume', label: 'Resume', hint: '', accent: '#8be08b' });
   buttons.push({ id: 'play',     label: showResume ? 'New Game' : 'Play', hint: 'face the horde', accent: '#7ec8ff' });
   buttons.push({ id: 'training', label: 'Training Arena',                 hint: 'cheats unlocked · practice freely', accent: '#ffd166' });
+  buttons.push({ id: 'tutorial', label: 'How to Play',                    hint: 'controls + systems', accent: '#5cffec' });
   buttons.push({ id: 'settings', label: 'Settings',                        hint: 'audio, sprites, more', accent: '#c47eff' });
   const totalH = buttons.length * bh + (buttons.length - 1) * gap;
   let by = H / 2 - 20;
@@ -5449,6 +5526,205 @@ function drawMainMenu() {
     menuButtons.push(rect);
     by += bh + gap;
   }
+  ctx.textAlign = 'left';
+}
+
+// ---------- Tutorial / How to Play overlay ----------
+// Each page = { title, sections: [{ heading, lines: [...] }] }.
+const TUTORIAL_PAGES = [
+  {
+    title: 'The Basics',
+    accent: '#7ec8ff',
+    sections: [
+      { heading: 'Movement & Aim', lines: [
+        'WASD or arrow keys to move',
+        'Mouse aims your weapon',
+        'Hold Left Click to fire your primary',
+      ] },
+      { heading: 'Survive the Waves', lines: [
+        'Each wave spawns more (and tougher) zombies',
+        'Every 20th wave is a BOSS — they drop ability books',
+        'Top-right area is the SHOP — zombies cannot enter',
+        'After each wave you pick 1 of 3 perk tomes',
+      ] },
+      { heading: 'If You Die', lines: [
+        'You drop your weapon + money on the ground',
+        'The current wave restarts but permanent upgrades stay',
+        'Press R to hard-reset everything if you get stuck',
+      ] },
+    ],
+  },
+  {
+    title: 'Primary Weapons',
+    accent: '#ffd166',
+    sections: [
+      { heading: 'How They Work', lines: [
+        'Primary weapons fire on Left Click',
+        'They drop randomly from zombies (rare) and bosses',
+        'Walk over a pickup and press E (or click Swap)',
+        'You drop your current weapon when you swap',
+      ] },
+      { heading: 'Some Favorites', lines: [
+        'Pistol — your infinite default, never drops',
+        'Shotgun — close-range spread',
+        'SMG / Rifle — sustained DPS',
+        'Rocket — explosive AoE',
+        'Plus Gun — fires in a + around you',
+        'Tesla — chains lightning between zombies',
+        'Railgun — extreme speed, pierces everything',
+      ] },
+    ],
+  },
+  {
+    title: 'Secondary Weapons',
+    accent: '#c47eff',
+    sections: [
+      { heading: 'How They Work', lines: [
+        'Right Click (or Q) to use your secondary',
+        'Drop from utility crates that spawn each wave',
+        'Press F (or click Swap) to pick one up',
+        'Some are weapons, some are utility / summons',
+      ] },
+      { heading: 'Types', lines: [
+        'Katana / Warhammer — melee swings around you',
+        'Kunai / Chakram — thrown projectiles',
+        'Medkit / Healing Field — restore HP',
+        'Decoy / EMP — crowd control',
+        'Bomb Launcher — long-range explosives',
+        'Tomes (chicken/bat/wolf/spider/spirit) — summon allies',
+      ] },
+    ],
+  },
+  {
+    title: 'Abilities',
+    accent: '#5cffec',
+    sections: [
+      { heading: 'How They Work', lines: [
+        'Shift fires your CURRENTLY SELECTED ability',
+        'Tab or mouse wheel cycles between unlocked abilities',
+        'New abilities drop as books from BOSSES only',
+        'Dash is unlocked by default',
+      ] },
+      { heading: 'What They Do', lines: [
+        'Dash — quick teleport with i-frames',
+        'Bullet Time — zombies slow to 30%',
+        'Rage — your damage doubles',
+        'Phase Walk — brief invulnerability',
+        'Homing — your bullets seek targets',
+        'Magnetic Pull — yank every zombie to you',
+        'Lightning Storm — strike every zombie at once',
+      ] },
+    ],
+  },
+  {
+    title: 'Progression',
+    accent: '#8be08b',
+    sections: [
+      { heading: 'Money (Shop)', lines: [
+        'Money drops from zombies and crates',
+        'Stand inside the shop rect and press 1–9',
+        'Buys permanent stat upgrades + one-shot consumables',
+      ] },
+      { heading: 'EXP (Trees)', lines: [
+        'EXP drops from zombies (lots from bosses)',
+        'Press T to open the Tomes Shop / Tree of Upgrades',
+        'Tomes Shop — sorted permanent perks by category',
+        'Tree of Upgrades — root system, branches into 8 themes',
+      ] },
+      { heading: 'Tomes (Per-Run)', lines: [
+        'After each wave, pick 1 of 3 perk cards',
+        'These stack across the whole run',
+        'Cards stay until you die or hard-reset',
+      ] },
+    ],
+  },
+];
+
+function drawTutorial() {
+  ctx.fillStyle = 'rgba(6, 8, 12, 0.92)';
+  ctx.fillRect(0, 0, W, H);
+
+  const page = TUTORIAL_PAGES[tutorialPage];
+  const accent = page.accent;
+
+  // header
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#9aa0ab';
+  ctx.font = 'bold 11px system-ui';
+  ctx.fillText(`HOW TO PLAY  ·  ${tutorialPage + 1} / ${TUTORIAL_PAGES.length}`, W / 2, 50);
+  ctx.fillStyle = accent;
+  ctx.font = 'bold 40px system-ui';
+  ctx.fillText(page.title, W / 2, 92);
+  // thin underline
+  ctx.strokeStyle = accent;
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(W / 2 - 80, 104); ctx.lineTo(W / 2 + 80, 104);
+  ctx.stroke();
+
+  // content panel
+  const panelX = 140, panelY = 130, panelW = W - 280, panelH = H - 230;
+  ctx.fillStyle = 'rgba(14, 16, 24, 0.85)';
+  ctx.fillRect(panelX, panelY, panelW, panelH);
+  ctx.strokeStyle = '#33363f';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(panelX + 0.5, panelY + 0.5, panelW - 1, panelH - 1);
+  // accent stripe on the left
+  ctx.fillStyle = accent;
+  ctx.fillRect(panelX, panelY, 4, panelH);
+
+  // sections — laid out in two columns
+  const colW = (panelW - 60) / 2;
+  const col1X = panelX + 24;
+  const col2X = panelX + 24 + colW + 12;
+  let col = 0, y1 = panelY + 30, y2 = panelY + 30;
+  for (const sec of page.sections) {
+    const x = col === 0 ? col1X : col2X;
+    let y = col === 0 ? y1 : y2;
+    ctx.textAlign = 'left';
+    ctx.fillStyle = accent;
+    ctx.font = 'bold 16px system-ui';
+    ctx.fillText(sec.heading, x, y);
+    y += 8;
+    // underline
+    ctx.strokeStyle = accent;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(x, y); ctx.lineTo(x + 40, y);
+    ctx.stroke();
+    y += 14;
+    ctx.fillStyle = '#dfe2e8';
+    ctx.font = '13px system-ui';
+    for (const line of sec.lines) {
+      // bullet
+      ctx.fillStyle = accent;
+      ctx.fillRect(x, y - 7, 3, 3);
+      ctx.fillStyle = '#dfe2e8';
+      ctx.fillText(line, x + 10, y);
+      y += 18;
+    }
+    y += 14;
+    if (col === 0) y1 = y; else y2 = y;
+    col = 1 - col;
+  }
+
+  // nav buttons
+  menuButtons = [];
+  const bw = 140, bh = 44, by = H - 78;
+  const prevRect = { x: W / 2 - bw - 90, y: by, w: bw, h: bh, id: 'tutorial-prev' };
+  const nextRect = { x: W / 2 + 90,      y: by, w: bw, h: bh, id: 'tutorial-next' };
+  const closeRect = { x: W / 2 - bw / 2, y: by, w: bw, h: bh, id: 'tutorial-close' };
+  if (tutorialPage > 0) {
+    drawMenuButton(prevRect, '← Prev', null, '#7ec8ff');
+    menuButtons.push(prevRect);
+  }
+  drawMenuButton(closeRect, 'Back to Menu', null, '#ff5050');
+  menuButtons.push(closeRect);
+  if (tutorialPage < TUTORIAL_PAGES.length - 1) {
+    drawMenuButton(nextRect, 'Next →', null, '#7ec8ff');
+    menuButtons.push(nextRect);
+  }
+
   ctx.textAlign = 'left';
 }
 
@@ -6015,6 +6291,19 @@ function handleMenuAction(id) {
       break;
     case 'settings':
       gameState = 'settings';
+      break;
+    case 'tutorial':
+      gameState = 'tutorial';
+      tutorialPage = 0;
+      break;
+    case 'tutorial-next':
+      tutorialPage = Math.min(TUTORIAL_PAGES.length - 1, tutorialPage + 1);
+      break;
+    case 'tutorial-prev':
+      tutorialPage = Math.max(0, tutorialPage - 1);
+      break;
+    case 'tutorial-close':
+      gameState = 'menu';
       break;
     case 'menu':
       gameState = 'menu';
@@ -7005,6 +7294,7 @@ function tick() {
     updateAbilityBooks(dt);
     updateParticles(dt);
     updateDecals(dt);
+    updateTooltips(dt);
     updateWave(dt);
     // decay visual effects only while playing
     if (shakeAmt > 0) {
@@ -7023,6 +7313,7 @@ function tick() {
   if (gameState === 'menu') drawMainMenu();
   else if (gameState === 'paused') drawPauseMenu();
   else if (gameState === 'settings') drawSettingsMenu();
+  else if (gameState === 'tutorial') drawTutorial();
   else if (gameState === 'tree') drawUpgradeTree();
   if (trainingMode && gameState === 'playing') drawTrainingBanner();
 
