@@ -7677,10 +7677,16 @@ function render() {
     }
   }
 
-  // player
-  if (player.invuln > 0 && Math.floor(player.invuln * 12) % 2 === 0) {
-    // flicker — skip drawing
-  } else {
+  // player — always rendered. During invuln the alpha pulses between
+  // "ghosted" (0.35) and "almost solid" (0.85) so i-frames read clearly
+  // without ever making the player vanish from view (the old skip-frame
+  // flicker could disappear for hundreds of ms on long invuln windows).
+  {
+    ctx.save();
+    if (player.invuln > 0) {
+      const dim = Math.floor(player.invuln * 12) % 2 === 0;
+      ctx.globalAlpha = dim ? 0.35 : 0.85;
+    }
     const dx = mouse.x - player.x, dy = mouse.y - player.y;
     const m = Math.hypot(dx, dy) || 1;
     const cosA = dx / m, sinA = dy / m;
@@ -7740,10 +7746,16 @@ function render() {
       ctx.restore();
     }
 
+    ctx.restore(); // close the invuln-alpha block
   }
 
   // ---- P2 (local co-op) ----
-  if (coopEnabled && !(player2.invuln > 0 && Math.floor(player2.invuln * 12) % 2 === 0)) {
+  if (coopEnabled) {
+    ctx.save();
+    if (player2.invuln > 0) {
+      const dim = Math.floor(player2.invuln * 12) % 2 === 0;
+      ctx.globalAlpha = dim ? 0.35 : 0.85;
+    }
     // Aim toward nearest zombie for facing direction (matches its auto-fire)
     let nx = player2.x + 1, ny = player2.y;
     let bd2 = Infinity;
@@ -7790,6 +7802,7 @@ function render() {
       ctx.fillStyle = '#9bf07a';
       ctx.fillRect(player2.x - bw/2, player2.y - player2.r - 9, bw * (player2.hp / player2.maxHp), 3);
     }
+    ctx.restore(); // close the P2 invuln-alpha block
   }
 
   // build-mode ghost preview at the cursor (in world coords)
