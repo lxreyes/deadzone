@@ -106,7 +106,8 @@ let cheatsOpen = true;
 let godMode    = false;
 let cheatsHeaderRect = null;
 
-// Each cheat: label + run() to execute. Optional toggle() returns on/off state.
+// Each cheat: label (string or () => string) + run() to execute.
+// Optional toggle() returns on/off state for boolean cheats.
 const cheats = [
   { label: '+$500', run() { player.money += 500; } },
   { label: 'Full Heal', run() { player.hp = player.maxHp; } },
@@ -130,6 +131,12 @@ const cheats = [
       const type = PICKUP_KEYS[Math.floor(Math.random() * PICKUP_KEYS.length)];
       const a = Math.random() * Math.PI * 2;
       spawnPickupAt(player.x + Math.cos(a) * 50, player.y + Math.sin(a) * 50, type);
+    } },
+  { label: () => `Gun: ${WEAPONS[player.weapon].name}`,
+    run() {
+      const ks = Object.keys(WEAPONS);
+      const i = ks.indexOf(player.weapon);
+      player.weapon = ks[(i + 1) % ks.length];
     } },
   { label: 'Max Upgrades', run() {
       for (const u of upgrades) if (u.type === 'perm') u.buy();
@@ -1792,8 +1799,9 @@ function drawCheats() {
     ctx.fillStyle = '#fff';
     ctx.font = 'bold 11px system-ui';
     ctx.textAlign = 'center';
+    const labelStr = typeof c.label === 'function' ? c.label() : c.label;
     ctx.fillText(
-      c.toggle ? `${c.label}: ${isOn ? 'ON' : 'OFF'}` : c.label,
+      c.toggle ? `${labelStr}: ${isOn ? 'ON' : 'OFF'}` : labelStr,
       rect.x + rect.w / 2, rect.y + 16);
     by += btnH + 3;
   }
