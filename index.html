@@ -812,6 +812,11 @@ const SECONDARIES = {
              minSpeed: 720, maxSpeed: 1400, life: 1.4,
              minPierce: 1, maxPierce: 4,
              desc: 'Hold to charge · longer draw = more damage & pierce' },
+  // Random-effect potion — arc-thrown, picks 1 of 10 negative effects on
+  // impact and applies it to every non-boss zombie inside the splash radius.
+  potion:  { name: 'Mystery Potion', kind: 'potion', cooldown: 5.5, color: '#c47eff', tag: 'P',
+             range: 280, flightDur: 0.65, peakHeight: 60, splashR: 100,
+             desc: 'Throws a potion · 1 of 10 random nasty effects' },
 };
 const SECONDARY_KEYS = Object.keys(SECONDARIES);
 
@@ -826,7 +831,7 @@ const PRIMARY_GROUPS = [
 const SECONDARY_GROUPS = [
   { name: 'Melee',   ids: ['katana', 'warhammer'] },
   { name: 'Thrown',  ids: ['kunai', 'chakram', 'bow'] },
-  { name: 'Utility', ids: ['medkit', 'decoy', 'emp', 'bomb', 'healingField'] },
+  { name: 'Utility', ids: ['medkit', 'decoy', 'emp', 'bomb', 'healingField', 'potion'] },
   { name: 'Tomes',   ids: ['chickenTome', 'batTome', 'wolfTome', 'spiderTome', 'spiritTome'] },
 ];
 const TRADER_PRIMARY_IDS = ['fish', 'pizza', 'toaster', 'confetti', 'mower', 'noodle'];
@@ -2366,6 +2371,52 @@ function drawBullet(b) {
     ctx.restore();
     return;
   }
+  if (b.bulletKind === 'potion') {
+    // Arc-thrown potion flask — same lift/shadow system as the bomb but
+    // drawn as a colored flask with a cork. Tumbles end-over-end while
+    // airborne. Landing ring previews splash radius.
+    const lift = b.h || 0;
+    if (lift > 0) {
+      const ss = 1 - Math.min(0.6, lift / 100);
+      ctx.fillStyle = `rgba(0, 0, 0, ${0.45 * ss})`;
+      ctx.beginPath();
+      ctx.ellipse(b.x, b.y, 5 * (0.6 + 0.4 * ss), 2 * (0.6 + 0.4 * ss), 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.save();
+    ctx.translate(b.x, b.y - lift);
+    if (b.arcBomb) ctx.rotate((b.flightT || 0) * Math.PI * 6);
+    // Flask body — rounded base, narrow neck
+    ctx.fillStyle = b.color || '#c47eff';
+    ctx.beginPath();
+    ctx.ellipse(0, 1, 4.5, 5, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#1a1a22';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    // Liquid highlight
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.45)';
+    ctx.beginPath();
+    ctx.ellipse(-1.4, -0.5, 1.2, 2.2, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // Neck
+    ctx.fillStyle = '#1a1a22';
+    ctx.fillRect(-1.2, -6, 2.4, 3);
+    // Cork
+    ctx.fillStyle = '#a06a3a';
+    ctx.fillRect(-1.6, -8, 3.2, 2);
+    ctx.restore();
+    // Splash-radius ring at the target while in flight
+    if (b.arcBomb && b.flightT < 0.95) {
+      const ringR = (b.potionRadius || 100);
+      ctx.strokeStyle = `rgba(196, 126, 255, ${0.25 + 0.12 * Math.sin(gameTime * 6)})`;
+      ctx.lineWidth = 1.4;
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath(); ctx.arc(b.targetX, b.targetY, ringR, 0, Math.PI * 2); ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    return;
+  }
   if (b.bulletKind === 'bomb') {
     const lift = b.h || 0;
     // Ground shadow — softens / shrinks as the bomb climbs higher
@@ -3066,6 +3117,7 @@ const ARSENAL_SECONDARIES = [
   { id: 'kunai',        cost: 180 },
   { id: 'chakram',      cost: 220 },
   { id: 'bow',          cost: 300 },
+  { id: 'potion',       cost: 280 },
   { id: 'medkit',       cost: 140 },
   { id: 'decoy',        cost: 140 },
   { id: 'emp',          cost: 220 },
@@ -4043,6 +4095,7 @@ function useSecondary() {
   else if (def.kind === 'summon') useSummon(def);
   else if (def.kind === 'field')  useField(def);
   else if (def.kind === 'launcher') useBombLauncher(def);
+  else if (def.kind === 'potion')   usePotion(def);
   else if (def.kind === 'slowtime') useSlowTime(def);
 }
 
@@ -4155,6 +4208,121 @@ function useBombLauncher(def) {
   });
   muzzleFlash(player.x + Math.cos(ang) * (player.r + 10), player.y + Math.sin(ang) * (player.r + 10), ang);
   SFX.shoot('rocket');
+}
+
+// 10 nasty effects the Mystery Potion can roll on impact. Each apply(z)
+// mutates the hit zombie directly using the existing status fields where
+// possible; the rare ones (confusion) add their own counter.
+const POTION_EFFECTS = [
+  { id: 'burn', label: 'Burn', color: '#ff5050', apply(z) {
+      z.burnTimer = Math.max(z.burnTimer || 0, 5);
+      z.burnDps = Math.max(z.burnDps || 0, 14);
+  } },
+  { id: 'poison', label: 'Poison', color: '#5cd86b', apply(z) {
+      z.poisonTimer = Math.max(z.poisonTimer || 0, 8);
+      z.poisonDps = Math.max(z.poisonDps || 0, 10);
+  } },
+  { id: 'frost', label: 'Frost', color: '#a0d0ff', apply(z) {
+      z.slowTimer = Math.max(z.slowTimer || 0, 6);
+  } },
+  { id: 'freeze', label: 'Freeze', color: '#7eb0ff', apply(z) {
+      z.stunTimer = Math.max(z.stunTimer || 0, 2.5);
+      z.slowTimer = Math.max(z.slowTimer || 0, 2.5);
+  } },
+  { id: 'shock', label: 'Shockwave', color: '#ffce44', apply(z) {
+      const ang = Math.atan2(z.y - player.y, z.x - player.x);
+      const push = z.isBoss ? 350 : 1400;
+      z.knockVx = (z.knockVx || 0) + Math.cos(ang) * push;
+      z.knockVy = (z.knockVy || 0) + Math.sin(ang) * push;
+  } },
+  { id: 'bleed', label: 'Bleed', color: '#a82020', apply(z) {
+      z.poisonTimer = Math.max(z.poisonTimer || 0, 4);
+      z.poisonDps = Math.max(z.poisonDps || 0, 28);
+  } },
+  { id: 'confuse', label: 'Confusion', color: '#c47eff', apply(z) {
+      z.confuseTimer = 5;
+      z.confuseAng = Math.random() * Math.PI * 2;
+      z.confuseRetargetT = 0.8;
+  } },
+  { id: 'toxic', label: 'Toxic Mire', color: '#80c060', apply(z) {
+      z.slowTimer = Math.max(z.slowTimer || 0, 6);
+      z.poisonTimer = Math.max(z.poisonTimer || 0, 6);
+      z.poisonDps = Math.max(z.poisonDps || 0, 12);
+  } },
+  { id: 'inferno', label: 'Inferno', color: '#ff8030', apply(z) {
+      z.burnTimer = Math.max(z.burnTimer || 0, 6);
+      z.burnDps = Math.max(z.burnDps || 0, 16);
+      z.slowTimer = Math.max(z.slowTimer || 0, 4);
+  } },
+  { id: 'damnation', label: 'DAMNATION', color: '#ffffff', apply(z) {
+      // Jackpot — everything at once, slightly shorter durations
+      z.burnTimer = Math.max(z.burnTimer || 0, 6);
+      z.burnDps = Math.max(z.burnDps || 0, 14);
+      z.poisonTimer = Math.max(z.poisonTimer || 0, 6);
+      z.poisonDps = Math.max(z.poisonDps || 0, 12);
+      z.slowTimer = Math.max(z.slowTimer || 0, 6);
+      z.stunTimer = Math.max(z.stunTimer || 0, 1.5);
+  } },
+];
+
+// Mystery Potion — arc-thrown projectile that lands and applies a random
+// status to every non-boss zombie in the splash radius.
+function usePotion(def) {
+  const ang = Math.atan2(mouse.y - player.y, mouse.x - player.x);
+  const baseRange = def.range * (1 + (player.special.eagleEye || 0));
+  const cursorDist = Math.hypot(mouse.x - player.x, mouse.y - player.y);
+  const dist = Math.min(baseRange, Math.max(50, cursorDist));
+  const startX = player.x + Math.cos(ang) * (player.r + 6);
+  const startY = player.y + Math.sin(ang) * (player.r + 6);
+  const targetX = player.x + Math.cos(ang) * dist;
+  const targetY = player.y + Math.sin(ang) * dist;
+  bullets.push({
+    x: startX, y: startY,
+    vx: 0, vy: 0,
+    damage: 0, pierce: 0,
+    hits: new Set(),
+    life: 10,
+    color: def.color,
+    explosive: false, blastR: 0, blastDmg: 0,
+    bulletKind: 'potion',
+    arcBomb: true, isPotion: true,
+    startX, startY, targetX, targetY,
+    flightT: 0, flightDur: def.flightDur, peakHeight: def.peakHeight, h: 0,
+    potionRadius: def.splashR,
+    bounces: 0, leavesSlick: false, spawnChicks: 0,
+    chains: 0, chainRange: 0, orbitAngle: 0, orbitRadius: 0, orbitSpeed: 0,
+    homing: false, isCrit: false,
+    bulletKnock: 0, clearHitsInterval: 0, clearHitsAt: 0,
+    spawnToasts: 0, dropsHazard: null,
+    effect: null, effectDur: 0, effectDps: 0,
+    explodesIntoSauce: false,
+  });
+  SFX.throwBlade && SFX.throwBlade();
+}
+
+// Resolve a potion landing: pick a random effect, apply to non-boss zombies
+// inside the splash radius, throw a colored particle burst + label floater.
+function landPotion(x, y, radius) {
+  const fx = POTION_EFFECTS[Math.floor(Math.random() * POTION_EFFECTS.length)];
+  let hit = 0;
+  for (const z of zombies) {
+    if (z.isDummy) continue;
+    if (z.isBoss) continue; // bosses ignore the splash
+    const dx = z.x - x, dy = z.y - y;
+    if (dx * dx + dy * dy < radius * radius) {
+      fx.apply(z);
+      hit++;
+    }
+  }
+  // Splash particle burst tinted to the rolled effect
+  for (let k = 0; k < 28; k++) {
+    const a = Math.random() * Math.PI * 2;
+    const sp = 80 + Math.random() * 220;
+    particles.push({ x, y, vx: Math.cos(a)*sp, vy: Math.sin(a)*sp, life: 0.5 + Math.random()*0.35, color: fx.color });
+  }
+  // Label floater so the player can read which effect rolled
+  floaters.push({ x, y: y - 24, text: fx.label, life: 1.6, color: fx.color });
+  SFX.unlock();
 }
 
 function useSlowTime(def) {
@@ -5349,10 +5517,25 @@ function updateZombies(dt) {
     const z = zombies[i];
     // Dummies don't move, don't attack, don't aggro on anything.
     if (z.isDummy) continue;
-    // Aggro toward the nearest decoy if there is one, else the player.
-    const lure = nearestDecoy(z);
-    const tx = lure ? lure.x : player.x;
-    const ty = lure ? lure.y : player.y;
+    // Confusion (Mystery Potion) — overrides chase. The zombie picks a
+    // random direction every ~1 second and stumbles toward it instead of
+    // chasing anything sensible.
+    let tx, ty;
+    if (z.confuseTimer && z.confuseTimer > 0) {
+      z.confuseTimer -= dt;
+      z.confuseRetargetT = (z.confuseRetargetT || 0) - dt;
+      if (z.confuseRetargetT <= 0) {
+        z.confuseAng = Math.random() * Math.PI * 2;
+        z.confuseRetargetT = 0.6 + Math.random() * 0.8;
+      }
+      tx = z.x + Math.cos(z.confuseAng) * 200;
+      ty = z.y + Math.sin(z.confuseAng) * 200;
+    } else {
+      // Aggro toward the nearest decoy if there is one, else the player.
+      const lure = nearestDecoy(z);
+      tx = lure ? lure.x : player.x;
+      ty = lure ? lure.y : player.y;
+    }
     const dx = tx - z.x, dy = ty - z.y;
     const d = Math.hypot(dx, dy) || 1;
     // banana slicks slow whoever's on top of them
@@ -5758,7 +5941,13 @@ function updateBullets(dt) {
     if (b.arcBomb) {
       b.flightT += dt / b.flightDur;
       if (b.flightT >= 1) {
-        explode(b.targetX, b.targetY, b.blastR, b.damage + b.blastDmg);
+        // Mystery Potion takes a different landing path — random status
+        // applied to zombies inside its splash radius (no direct damage).
+        if (b.isPotion) {
+          landPotion(b.targetX, b.targetY, b.potionRadius || 100);
+        } else {
+          explode(b.targetX, b.targetY, b.blastR, b.damage + b.blastDmg);
+        }
         bullets.splice(i, 1);
         continue;
       }
@@ -10191,6 +10380,29 @@ function drawShopSecondaryIcon(id, cx, cy, size) {
       // spark
       ctx.fillStyle = color;
       ctx.beginPath(); ctx.arc(s * 0.55, -s * 0.95, 2, 0, Math.PI * 2); ctx.fill();
+      break;
+    }
+    case 'potion': {
+      // Round flask body with neck + cork + liquid highlight + bubbles
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.ellipse(0, s * 0.2, s * 0.6, s * 0.65, 0, 0, Math.PI * 2);
+      ctx.fill(); ctx.stroke();
+      // neck
+      ctx.fillStyle = '#1a1a22';
+      ctx.fillRect(-s * 0.16, -s * 0.6, s * 0.32, s * 0.45);
+      // cork
+      ctx.fillStyle = '#a06a3a';
+      ctx.fillRect(-s * 0.22, -s * 0.85, s * 0.44, s * 0.22);
+      // liquid highlight
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.55)';
+      ctx.beginPath();
+      ctx.ellipse(-s * 0.2, s * 0.0, s * 0.15, s * 0.28, 0, 0, Math.PI * 2);
+      ctx.fill();
+      // floating bubbles inside the potion
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+      ctx.beginPath(); ctx.arc(s * 0.15, s * 0.3, s * 0.07, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(s * 0.0, s * 0.55, s * 0.05, 0, Math.PI * 2); ctx.fill();
       break;
     }
     case 'healingField': {
