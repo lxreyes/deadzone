@@ -273,7 +273,24 @@ const floaters= []; // floating reward text — { x, y, text, life, color }
 const slashes = []; // katana swing arcs — { x, y, ang, life, max, range, arc, color }
 const sparks  = []; // tesla lightning links — { x1, y1, x2, y2, life, max }
 const decoys  = []; // decoy lures — { x, y, hp, hpMax, life }
+const buildings = []; // placed buildings — { type, x, y, hp, hpMax, ... }
 const decals  = []; // blood splats on the floor
+
+// Building catalog. Buildings snap to the 40px floor grid; w/h govern both
+// the collision rect and how zombies bump into them.
+const BUILDINGS = {
+  wall:   { name: 'Wall',       cost: 30, hp: 220, w: 36, h: 36, color: '#5a87c4', blocks: true },
+  turret: { name: 'Turret',     cost: 90, hp: 110, w: 32, h: 32, color: '#ff9d3a', blocks: true,
+            fireRate: 1.8, range: 250, damage: 14 },
+  spike:  { name: 'Spike Trap', cost: 35, hp: 90,  w: 36, h: 36, color: '#bfc3cc', blocks: false,
+            dps: 32 },
+};
+const BUILDING_KEYS = Object.keys(BUILDINGS);
+
+// Build mode state — toggled by B. While true, the player ghosts a building
+// at the cursor and clicks to place if cost + space allow.
+let buildMode = false;
+let buildSelected = 'wall';
 
 // Random pickup definitions. apply() runs when the player walks over one.
 const PICKUP_TYPES = {
@@ -347,11 +364,11 @@ let cheatsHeaderRect = null;
 const cheatsPanel = { x: 14, y: 168, w: 168 };
 let cheatsDrag = null;       // { offX, offY, moved } while dragging the panel
 let sliderDrag = null;       // { slider } while dragging a stat slider
+let buildToolbarRects = null; // populated each frame by drawBuildToolbar
 
 // Each cheat: label (string or () => string) + run() to execute.
 // Optional toggle() returns on/off state for boolean cheats.
 const cheats = [
-  { label: '+$500', run() { player.money += 500; } },
   { label: 'Full Heal', run() { player.hp = player.maxHp; } },
   { label: 'Kill All', run() {
       for (const z of zombies) {
@@ -937,6 +954,11 @@ addEventListener('keydown', e => {
   keys[e.code] = true;
   if (e.code === 'KeyR') hardReset();
   if (e.code === 'KeyM') { soundMuted = !soundMuted; if (!soundMuted) SFX.uiClick(); }
+  if (e.code === 'KeyB' && !pendingCards) {
+    buildMode = !buildMode;
+    SFX.uiClick();
+  }
+  if (e.code === 'Escape' && buildMode) { buildMode = false; SFX.uiClick(); }
   // card pick takes priority over everything else digit-related
   if (pendingCards) {
     if (e.code === 'Digit1') { pickCard(0); return; }
@@ -951,6 +973,11 @@ addEventListener('keydown', e => {
   }
   if (e.code === 'KeyE' && nearbyGun) doSwapWeapon();
   if (e.code === 'KeyQ' && !inShop() && !pendingCards) useSecondary();
+  // build-mode digit selection takes priority over shop/cheats
+  if (buildMode && e.code.startsWith('Digit')) {
+    const bi = ['Digit1','Digit2','Digit3'].indexOf(e.code);
+    if (bi >= 0 && BUILDING_KEYS[bi]) { buildSelected = BUILDING_KEYS[bi]; SFX.uiClick(); return; }
+  }
   // shop buying — or cheat-code entry when standing outside the shop
   if (inShop()) {
     const idx = ['Digit1','Digit2','Digit3','Digit4','Digit5','Digit6','Digit7','Digit8','Digit9'].indexOf(e.code);
@@ -991,6 +1018,22 @@ c.addEventListener('mousedown', e => {
     return;
   }
   if (e.button !== 0) return;
+  // build mode absorbs clicks for placement (toolbar handles its own clicks first)
+  if (buildMode && !pendingCards) {
+    // toolbar slot click handled in drawBuildToolbar via buildToolbarRects;
+    // check those before falling through to placement
+    if (buildToolbarRects) {
+      for (let k = 0; k < BUILDING_KEYS.length; k++) {
+        if (pointInRect(mouse, buildToolbarRects[k])) {
+          buildSelected = BUILDING_KEYS[k];
+          SFX.uiClick();
+          return;
+        }
+      }
+    }
+    tryPlaceBuilding();
+    return;
+  }
   // card picker eats clicks while open
   if (pendingCards) {
     for (let i = 0; i < 3; i++) {
@@ -1345,9 +1388,10 @@ function tryShoot(nowSec) {
   // Pattern dispatch: each special weapon picks its own set of fire angles.
   let angles;
   if (w.pattern === 'plus') {
-    // four cardinal directions, regardless of where the player is aiming
-    angles = [0, Math.PI / 2, Math.PI, -Math.PI / 2];
-    // multishot rolls a 5th 'mouse-aim' bullet for fun
+    // 4-arm cross that rotates with the aim direction — the "forward" arm
+    // points at the mouse, the other three are 90° offsets from it.
+    angles = [baseAng, baseAng + Math.PI / 2, baseAng + Math.PI, baseAng - Math.PI / 2];
+    // multishot rolls a 5th forward bullet for fun
     if (shots > w.shots + extra) angles.push(baseAng);
   } else if (w.pattern === 'orbit') {
     // bullets are spawned orbiting the player, evenly spaced around baseAng
@@ -1511,6 +1555,118 @@ function updateDecoys(dt) {
         particles.push({ x: d.x, y: d.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s, life: 0.6, color: '#ffce44' });
       }
       decoys.splice(i, 1);
+    }
+  }
+}
+
+// ---------- Buildings ----------
+function snapBuildPos(x, y) {
+  const g = 40;
+  // grid cells are centered at multiples of g
+  return { x: Math.round(x / g) * g, y: Math.round(y / g) * g };
+}
+
+function canPlaceBuilding(x, y, def) {
+  // canvas bounds
+  if (x - def.w/2 < 0 || x + def.w/2 > W) return false;
+  if (y - def.h/2 < 0 || y + def.h/2 > H) return false;
+  // shop area is off-limits
+  if (x + def.w/2 > shop.x - 4 && x - def.w/2 < shop.x + shop.w + 4
+   && y + def.h/2 > shop.y - 4 && y - def.h/2 < shop.y + shop.h + 4) return false;
+  // overlap with other buildings
+  for (const b of buildings) {
+    if (Math.abs(x - b.x) < (def.w + b.w) / 2 && Math.abs(y - b.y) < (def.h + b.h) / 2) return false;
+  }
+  // overlap with player (would trap us)
+  if (Math.abs(x - player.x) < def.w/2 + player.r && Math.abs(y - player.y) < def.h/2 + player.r) return false;
+  return true;
+}
+
+function tryPlaceBuilding() {
+  const def = BUILDINGS[buildSelected];
+  if (!def) return;
+  const { x, y } = snapBuildPos(mouse.x, mouse.y);
+  if (!canPlaceBuilding(x, y, def)) return;
+  if (player.money < def.cost) return;
+  player.money -= def.cost;
+  buildings.push({
+    type: buildSelected,
+    x, y,
+    hp: def.hp, hpMax: def.hp,
+    w: def.w, h: def.h,
+    color: def.color,
+    blocks: !!def.blocks,
+    fireRate: def.fireRate || 0,
+    range: def.range || 0,
+    damage: def.damage || 0,
+    dps: def.dps || 0,
+    lastShot: 0,
+    aimAng: 0,
+  });
+  dropBurst(x, y, def.color, 14);
+  SFX.crate();
+}
+
+function updateBuildings(dt) {
+  for (let i = buildings.length - 1; i >= 0; i--) {
+    const b = buildings[i];
+    if (b.hp <= 0) {
+      for (let k = 0; k < 22; k++) {
+        const a = Math.random() * Math.PI * 2;
+        const s = 80 + Math.random() * 200;
+        particles.push({ x: b.x, y: b.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s, life: 0.6, color: b.color });
+      }
+      shake(6);
+      SFX.explosion();
+      buildings.splice(i, 1);
+      continue;
+    }
+    if (b.type === 'turret') {
+      b.lastShot -= dt;
+      // pick the nearest zombie within range
+      let near = null, bd2 = b.range * b.range;
+      for (const z of zombies) {
+        const dx = z.x - b.x, dy = z.y - b.y;
+        const d2 = dx*dx + dy*dy;
+        if (d2 < bd2) { bd2 = d2; near = z; }
+      }
+      if (near) {
+        b.aimAng = Math.atan2(near.y - b.y, near.x - b.x);
+        if (b.lastShot <= 0) {
+          b.lastShot = 1 / b.fireRate;
+          const ang = b.aimAng;
+          bullets.push({
+            x: b.x + Math.cos(ang) * 18,
+            y: b.y + Math.sin(ang) * 18,
+            vx: Math.cos(ang) * 760,
+            vy: Math.sin(ang) * 760,
+            damage: b.damage,
+            pierce: 0,
+            hits: new Set(),
+            life: 1.0,
+            color: b.color,
+            explosive: false, blastR: 0, blastDmg: 0,
+            bulletKind: null,
+            bounces: 0, leavesSlick: false, spawnChicks: 0,
+            chains: 0, chainRange: 0,
+            orbitAngle: 0, orbitRadius: 0, orbitSpeed: 0,
+            isCrit: false,
+          });
+          SFX.shoot('pistol');
+        }
+      }
+    } else if (b.type === 'spike') {
+      // damage zombies standing on the trap
+      for (let j = zombies.length - 1; j >= 0; j--) {
+        const z = zombies[j];
+        if (Math.abs(z.x - b.x) < b.w/2 + z.r && Math.abs(z.y - b.y) < b.h/2 + z.r) {
+          z.hp -= b.dps * dt;
+          if (z.hp <= 0) {
+            killZombie(z);
+            zombies.splice(j, 1);
+          }
+        }
+      }
     }
   }
 }
@@ -1841,8 +1997,16 @@ function updatePlayer(dt) {
 }
 
 function zombieCanEnter(x, y, r) {
-  return !(x + r > shop.x && x - r < shop.x + shop.w
-        && y + r > shop.y && y - r < shop.y + shop.h);
+  // shop area is impassable
+  if (x + r > shop.x && x - r < shop.x + shop.w
+   && y + r > shop.y && y - r < shop.y + shop.h) return false;
+  // blocking buildings (walls + turrets) act as solid AABBs
+  for (const b of buildings) {
+    if (!b.blocks) continue;
+    if (x + r > b.x - b.w/2 && x - r < b.x + b.w/2
+     && y + r > b.y - b.h/2 && y - r < b.y + b.h/2) return false;
+  }
+  return true;
 }
 
 function updateZombies(dt) {
@@ -1916,6 +2080,12 @@ function updateZombies(dt) {
       const drr = z.r + 14;
       if (ddx*ddx + ddy*ddy < drr*drr) {
         dc.hp -= z.damage * dt;
+      }
+    }
+    // Building contact damage — zombies bash at walls/turrets they can't pass.
+    for (const b of buildings) {
+      if (Math.abs(z.x - b.x) < b.w/2 + z.r && Math.abs(z.y - b.y) < b.h/2 + z.r) {
+        b.hp -= z.damage * dt * 0.5;
       }
     }
   }
@@ -2284,6 +2454,8 @@ function hardReset() {
   slashes.length = 0;
   sparks.length = 0;
   decoys.length = 0;
+  buildings.length = 0;
+  buildMode = false;
   decals.length = 0;
   shakeAmt = 0; flashRed = 0; nearbyGun = null;
   player.weapon = 'pistol';
@@ -2408,6 +2580,12 @@ function render() {
     ctx.beginPath(); ctx.arc(p.x, p.y, 2.5, 0, Math.PI*2); ctx.fill();
   }
   ctx.globalAlpha = 1;
+
+  // buildings — walls, turrets, spike traps (drawn under zombies so a swarm
+  // can visually overlap them when bashing)
+  for (const b of buildings) {
+    drawBuilding(b);
+  }
 
   // decoys — colored dummy figure with HP bar above
   for (const dc of decoys) {
@@ -2754,6 +2932,9 @@ function render() {
     ctx.restore();
   }
 
+  // build-mode ghost preview at the cursor (in world coords)
+  drawBuildMode();
+
   // floating reward text (above everything in the world)
   for (const f of floaters) {
     const a = Math.max(0, Math.min(1, f.life / 1.2));
@@ -2791,7 +2972,163 @@ function render() {
   drawCheats();
   if (nearbyGun && nearbyGun.weapon !== player.weapon) drawSwapPrompt();
   if (inShop()) drawShop();
+  drawBuildToolbar();
   drawCardPicker(); // sits on top of everything when active
+}
+
+// ----- Building visuals -----
+function drawBuilding(b) {
+  const x = b.x - b.w / 2, y = b.y - b.h / 2;
+  if (b.type === 'wall') {
+    // metal-grey base + colored trim
+    ctx.fillStyle = '#1d2230';
+    ctx.fillRect(x, y, b.w, b.h);
+    ctx.strokeStyle = '#0a0a0a';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x, y, b.w, b.h);
+    ctx.fillStyle = b.color;
+    ctx.fillRect(x + 3, y + 3, b.w - 6, 5);
+    ctx.fillRect(x + 3, y + b.h - 8, b.w - 6, 5);
+    // bolts
+    ctx.fillStyle = '#5a5d66';
+    ctx.beginPath(); ctx.arc(x + 6, y + 6, 1.6, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(x + b.w - 6, y + 6, 1.6, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(x + 6, y + b.h - 6, 1.6, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(x + b.w - 6, y + b.h - 6, 1.6, 0, Math.PI*2); ctx.fill();
+  } else if (b.type === 'turret') {
+    // base
+    ctx.fillStyle = '#22252e';
+    ctx.fillRect(x, y, b.w, b.h);
+    ctx.strokeStyle = '#0a0a0a';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x, y, b.w, b.h);
+    // rotating head
+    ctx.save();
+    ctx.translate(b.x, b.y);
+    ctx.rotate(b.aimAng);
+    ctx.fillStyle = b.color;
+    ctx.beginPath(); ctx.arc(0, 0, 10, 0, Math.PI*2); ctx.fill();
+    ctx.strokeStyle = '#15151a';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    // barrel
+    ctx.fillStyle = '#15151a';
+    ctx.fillRect(6, -2, 14, 4);
+    ctx.fillStyle = b.color;
+    ctx.fillRect(18, -2.5, 4, 5);
+    ctx.restore();
+  } else if (b.type === 'spike') {
+    // plate + zigzag spikes
+    ctx.fillStyle = '#3a3d44';
+    ctx.fillRect(x, y, b.w, b.h);
+    ctx.strokeStyle = '#0a0a0a';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x, y, b.w, b.h);
+    ctx.fillStyle = b.color;
+    ctx.beginPath();
+    for (let k = 0; k < 5; k++) {
+      const sx = x + 3 + k * 7;
+      ctx.moveTo(sx, y + b.h - 4);
+      ctx.lineTo(sx + 3, y + 4);
+      ctx.lineTo(sx + 6, y + b.h - 4);
+      ctx.closePath();
+    }
+    ctx.fill();
+    ctx.strokeStyle = '#15151a';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+  // HP bar (only when wounded)
+  if (b.hpMax && b.hp < b.hpMax) {
+    const f = Math.max(0, b.hp / b.hpMax);
+    ctx.fillStyle = '#222';
+    ctx.fillRect(b.x - b.w/2, b.y - b.h/2 - 7, b.w, 3);
+    ctx.fillStyle = f > 0.5 ? '#5cb85c' : f > 0.25 ? '#e0a233' : '#d33';
+    ctx.fillRect(b.x - b.w/2, b.y - b.h/2 - 7, b.w * f, 3);
+  }
+}
+
+function drawBuildMode() {
+  if (!buildMode) return;
+  // ghost preview at snapped grid position
+  const def = BUILDINGS[buildSelected];
+  const { x, y } = snapBuildPos(mouse.x, mouse.y);
+  const ok = canPlaceBuilding(x, y, def) && player.money >= def.cost;
+  ctx.save();
+  ctx.globalAlpha = 0.55;
+  ctx.fillStyle = ok ? def.color : '#d33';
+  ctx.fillRect(x - def.w/2, y - def.h/2, def.w, def.h);
+  ctx.strokeStyle = ok ? '#ffffff' : '#d33';
+  ctx.lineWidth = 2;
+  ctx.setLineDash([4, 4]);
+  ctx.strokeRect(x - def.w/2, y - def.h/2, def.w, def.h);
+  ctx.setLineDash([]);
+  // turret aim hint — show range circle
+  if (def.range) {
+    ctx.strokeStyle = ok ? '#ffffff' : '#d33';
+    ctx.globalAlpha = 0.18;
+    ctx.beginPath(); ctx.arc(x, y, def.range, 0, Math.PI*2); ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawBuildToolbar() {
+  if (!buildMode) { buildToolbarRects = null; return; }
+  // small toolbar centered horizontally below the boss-bar zone
+  const slots = BUILDING_KEYS.length;
+  const sw = 130, sh = 64, gap = 10;
+  const totalW = slots * sw + (slots - 1) * gap;
+  const startX = (W - totalW) / 2;
+  const y = 44;
+  buildToolbarRects = [];
+  // backdrop
+  ctx.fillStyle = 'rgba(10, 12, 18, 0.92)';
+  ctx.fillRect(startX - 14, y - 22, totalW + 28, sh + 36);
+  ctx.strokeStyle = '#5a87c4';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(startX - 14, y - 22, totalW + 28, sh + 36);
+  // title
+  ctx.fillStyle = '#88aadd';
+  ctx.font = 'bold 12px system-ui';
+  ctx.textAlign = 'center';
+  ctx.fillText('BUILD  ·  [B] exit  ·  click to place', startX + totalW / 2, y - 8);
+
+  for (let i = 0; i < slots; i++) {
+    const key = BUILDING_KEYS[i];
+    const def = BUILDINGS[key];
+    const x = startX + i * (sw + gap);
+    const rect = { x, y, w: sw, h: sh };
+    buildToolbarRects.push(rect);
+    const selected = key === buildSelected;
+    const canAfford = player.money >= def.cost;
+    const hover = pointInRect(mouse, rect);
+    // body
+    ctx.fillStyle = selected ? '#1a3a5a' : (hover ? '#1c2030' : '#13151c');
+    ctx.fillRect(x, y, sw, sh);
+    ctx.strokeStyle = selected ? def.color : (canAfford ? '#33363f' : '#5a3030');
+    ctx.lineWidth = selected ? 3 : 1.5;
+    ctx.strokeRect(x, y, sw, sh);
+    // little visual swatch
+    ctx.fillStyle = def.color;
+    ctx.fillRect(x + 10, y + 12, 32, 32);
+    ctx.strokeStyle = '#15151a';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x + 10, y + 12, 32, 32);
+    // name + cost
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 13px system-ui';
+    ctx.textAlign = 'left';
+    ctx.fillText(def.name, x + 52, y + 26);
+    ctx.fillStyle = canAfford ? '#ffce44' : '#d33';
+    ctx.font = 'bold 12px system-ui';
+    ctx.fillText(`$${def.cost}`, x + 52, y + 44);
+    // hotkey
+    ctx.fillStyle = '#5a5d66';
+    ctx.font = '10px system-ui';
+    ctx.textAlign = 'right';
+    ctx.fillText(`[${i + 1}]`, x + sw - 8, y + 14);
+    ctx.textAlign = 'left';
+  }
 }
 
 function drawCheats() {
@@ -3522,6 +3859,7 @@ function tick() {
   updateSlashes(dt);
   updateSparks(dt);
   updateDecoys(dt);
+  updateBuildings(dt);
   updateParticles(dt);
   updateDecals(dt);
   updateWave(dt);
