@@ -102,7 +102,11 @@ let flashRed  = 0;        // 0..1 red overlay alpha (decays)
 const swapBtn = { x: 0, y: 0, w: 140, h: 32 };  // positioned during draw
 
 // ---------- Cheats panel ----------
-let cheatsOpen = true;
+// Hidden until the player types the unlock code (CHEAT_CODE) outside the shop.
+const CHEAT_CODE = '1234';
+let cheatsUnlocked = false;
+let cheatBuffer = '';
+let cheatsOpen = false;
 let godMode    = false;
 let cheatsHeaderRect = null;
 
@@ -524,10 +528,18 @@ addEventListener('keydown', e => {
     e.preventDefault();
   }
   if (e.code === 'KeyE' && nearbyGun) doSwapWeapon();
-  // shop buying
+  // shop buying — or cheat-code entry when standing outside the shop
   if (inShop()) {
     const idx = ['Digit1','Digit2','Digit3','Digit4','Digit5','Digit6','Digit7','Digit8','Digit9'].indexOf(e.code);
     if (idx >= 0 && idx < upgrades.length) tryBuy(idx);
+  } else if (!cheatsUnlocked && e.code.startsWith('Digit')) {
+    cheatBuffer = (cheatBuffer + e.code.slice(5)).slice(-CHEAT_CODE.length);
+    if (cheatBuffer === CHEAT_CODE) {
+      cheatsUnlocked = true;
+      cheatsOpen = true;
+      floaters.push({ x: 98, y: 200, text: 'CHEATS UNLOCKED', life: 2.8, color: '#8be08b' });
+      shake(6);
+    }
   }
 });
 addEventListener('keyup', e => { keys[e.code] = false; });
@@ -1760,6 +1772,12 @@ function render() {
 }
 
 function drawCheats() {
+  // hidden until the player enters the unlock code
+  if (!cheatsUnlocked) {
+    cheatsHeaderRect = null;
+    for (const c of cheats) c.rect = null;
+    return;
+  }
   const x = 14, y = 168;
   const w = 168, btnH = 24, header = 24;
   const h = cheatsOpen ? header + cheats.length * (btnH + 3) + 6 : header;
