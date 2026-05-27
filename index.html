@@ -1559,6 +1559,7 @@ const cheatSections = [
     { label: 'Boss: Charger',     run() { spawnSpecificBoss('charger'); } },
     { label: 'Boss: Hex Mage',    run() { spawnSpecificBoss('hexmage'); } },
     { label: 'Boss: Berserker',   run() { spawnSpecificBoss('berserker'); } },
+    { label: '+Boss Rush (5)', run() { spawnBossRush(); } },
     { label: 'Kill All', run() {
         for (const z of zombies) {
           if (!z.isDummy) kills++;
@@ -4026,6 +4027,23 @@ function updateArenaEvent(dt) {
   }
 }
 
+// BOSS RUSH — very rare variant of a boss wave where 5 bosses spawn instead
+// of 1. Triggered only on wave 60+ to keep early bosses approachable. The
+// boss-rush banner is shown for a few seconds when it fires.
+let bossRushBanner = 0; // game-time when banner should disappear
+
+function spawnBossRush() {
+  // Spread the 5 bosses across different edge spawn points so they don't
+  // cluster on top of each other / instantly overlap the player.
+  for (let k = 0; k < 5; k++) {
+    spawnBoss();
+  }
+  bossRushBanner = gameTime + 4.5;
+  // Big screen punch for emphasis
+  shake(28);
+  SFX.bossSpawn();
+}
+
 function beginNextWave() {
   wave++;
   bestWave = Math.max(bestWave, wave);
@@ -4034,8 +4052,13 @@ function beginNextWave() {
   isBossWave = (wave % 20 === 0);
   if (isBossWave) {
     waveZombiesToSpawn = 0;
-    spawnBoss();
-    SFX.bossSpawn();
+    // 5% chance of BOSS RUSH on any boss wave from 60 onward.
+    if (wave >= 60 && Math.random() < 0.05) {
+      spawnBossRush();
+    } else {
+      spawnBoss();
+      SFX.bossSpawn();
+    }
   } else {
     waveZombiesToSpawn = 5 + Math.floor(wave * 1.8);
     waveSpawnTimer = 0.4;
@@ -8028,6 +8051,7 @@ function render() {
   drawHud();
   drawStats();
   drawWaveBanner();
+  drawBossRushBanner();
   drawGuidedTutorialBanner();
   drawPauseButton();
   drawCheats();
@@ -10399,21 +10423,35 @@ function drawStats() {
 function drawWaveBanner() {
   // Boss HP bar — shown whenever any boss is alive (covers cheat-spawned bosses too)
   {
-    const boss = zombies.find(z => z.isBoss);
+    const allBosses = zombies.filter(z => z.isBoss);
+    const boss = allBosses[0];
     if (boss) {
       const bw = 540, bh = 18;
       const bx = (W - bw) / 2, by = 14;
       ctx.fillStyle = 'rgba(20, 5, 5, 0.85)';
       ctx.fillRect(bx, by, bw, bh);
+      // For boss rush, draw a combined HP bar across all live bosses.
+      let curHp, maxHp;
+      if (allBosses.length > 1) {
+        curHp = 0; maxHp = 0;
+        for (const b of allBosses) { curHp += Math.max(0, b.hp); maxHp += b.hpMax; }
+      } else {
+        curHp = Math.max(0, boss.hp); maxHp = boss.hpMax;
+      }
       ctx.fillStyle = '#ff3838';
-      ctx.fillRect(bx, by, bw * Math.max(0, boss.hp) / boss.hpMax, bh);
+      ctx.fillRect(bx, by, bw * curHp / maxHp, bh);
       ctx.strokeStyle = '#ff8080';
       ctx.lineWidth = 2;
       ctx.strokeRect(bx, by, bw, bh);
       ctx.fillStyle = '#fff';
       ctx.font = 'bold 12px system-ui';
       ctx.textAlign = 'center';
-      const bossLabel = boss.bossName ? `${boss.bossName.toUpperCase()}  ·  WAVE ${wave}` : `BOSS — WAVE ${wave}`;
+      let bossLabel;
+      if (allBosses.length > 1) {
+        bossLabel = `BOSS RUSH  ·  ${allBosses.length} REMAINING  ·  WAVE ${wave}`;
+      } else {
+        bossLabel = boss.bossName ? `${boss.bossName.toUpperCase()}  ·  WAVE ${wave}` : `BOSS — WAVE ${wave}`;
+      }
       ctx.fillText(bossLabel, W / 2, by + 13);
       ctx.textAlign = 'left';
     }
@@ -10460,6 +10498,39 @@ function drawWaveBanner() {
     ctx.fillText('click or press Space', W / 2, skipBtn.y + skipBtn.h + 16);
     ctx.textAlign = 'left';
   }
+}
+
+function drawBossRushBanner() {
+  if (bossRushBanner <= gameTime) return;
+  const remaining = bossRushBanner - gameTime;
+  // Fade in for the first 0.25s, hold, then fade the last 0.6s.
+  let alpha = 1;
+  if (remaining > 4.0) alpha = (4.5 - remaining) / 0.5;
+  else if (remaining < 0.6) alpha = remaining / 0.6;
+  alpha = Math.max(0, Math.min(1, alpha));
+  // Throbbing scale on the headline for arena-event drama.
+  const pulse = 1 + Math.sin(gameTime * 8) * 0.04;
+  const cx = W / 2, cy = H / 2 - 40;
+  ctx.save();
+  // Dim background bar behind the text
+  ctx.fillStyle = `rgba(120, 0, 0, ${0.42 * alpha})`;
+  ctx.fillRect(0, cy - 70, W, 160);
+  ctx.fillStyle = `rgba(0, 0, 0, ${0.55 * alpha})`;
+  ctx.fillRect(0, cy - 50, W, 120);
+  ctx.translate(cx, cy);
+  ctx.scale(pulse, pulse);
+  ctx.textAlign = 'center';
+  // Glowy red headline
+  ctx.shadowColor = `rgba(255, 60, 60, ${alpha})`;
+  ctx.shadowBlur = 24;
+  ctx.fillStyle = `rgba(255, 70, 70, ${alpha})`;
+  ctx.font = 'bold 64px system-ui';
+  ctx.fillText('BOSS RUSH', 0, 0);
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = `rgba(255, 220, 220, ${alpha})`;
+  ctx.font = 'bold 18px system-ui';
+  ctx.fillText('FIVE BOSSES HAVE ARRIVED', 0, 30);
+  ctx.restore();
 }
 
 function drawHud() {
