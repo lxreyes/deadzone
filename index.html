@@ -8106,15 +8106,18 @@ function drawMenuButton(rect, label, hint, accent) {
   const padL = stripe + 8, padR = 10;
   const inner = rect.w - padL - padR;
   const centerX = rect.x + padL + inner / 2;
-  // label — shrinks if too long for the button
+  // label — shrinks if too long for the button. Y positions are derived from
+  // rect.h so a shorter button (e.g., the 52px settings rows) keeps the hint
+  // text inside the button instead of letting it drop below.
   ctx.fillStyle = '#fff';
   fitFont(label, inner, 'bold 22px system-ui', 14);
   ctx.textAlign = 'center';
-  ctx.fillText(label, centerX, rect.y + (hint ? 34 : rect.h / 2 + 8));
+  const labelY = rect.y + (hint ? rect.h * 0.45 + 2 : rect.h / 2 + 8);
+  ctx.fillText(label, centerX, labelY);
   if (hint) {
     ctx.fillStyle = hover ? '#bcd6ff' : '#9aa0ab';
     fitFont(hint, inner, '12px system-ui', 9);
-    ctx.fillText(hint, centerX, rect.y + 54);
+    ctx.fillText(hint, centerX, rect.y + rect.h * 0.80);
   }
   ctx.textAlign = 'left';
 }
@@ -8537,7 +8540,7 @@ function drawSettingsMenu() {
   ctx.font = '13px system-ui';
   ctx.fillText('audio + sprite editor', W / 2, 134);
 
-  const bw = 360, bh = 52, gap = 14;
+  const bw = 400, bh = 60, gap = 14;
   let by = 180;
   menuButtons = [];
 
