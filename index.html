@@ -1231,6 +1231,25 @@ const cheatSections = [
       run() { player.abilities.storm = true; } },
     { label: 'Unlock All', run() { for (const k of ABILITY_KEYS) player.abilities[k] = true; } },
   ]},
+  { id: 'pets', name: 'Pets', open: false, items: [
+    { label: () => `Dog: ${ownedPets.has('dog') ? 'OWNED' : 'spawn'}`,
+      toggle: () => ownedPets.has('dog'),
+      run() { if (!ownedPets.has('dog')) spawnPetCheat('dog'); } },
+    { label: () => `Owl: ${ownedPets.has('owl') ? 'OWNED' : 'spawn'}`,
+      toggle: () => ownedPets.has('owl'),
+      run() { if (!ownedPets.has('owl')) spawnPetCheat('owl'); } },
+    { label: () => `Combat Bot: ${ownedPets.has('robot') ? 'OWNED' : 'spawn'}`,
+      toggle: () => ownedPets.has('robot'),
+      run() { if (!ownedPets.has('robot')) spawnPetCheat('robot'); } },
+    { label: () => `Ghost: ${ownedPets.has('ghost') ? 'OWNED' : 'spawn'}`,
+      toggle: () => ownedPets.has('ghost'),
+      run() { if (!ownedPets.has('ghost')) spawnPetCheat('ghost'); } },
+    { label: () => `Sentry Drone: ${ownedPets.has('drone') ? 'OWNED' : 'spawn'}`,
+      toggle: () => ownedPets.has('drone'),
+      run() { if (!ownedPets.has('drone')) spawnPetCheat('drone'); } },
+    { label: 'Spawn All', run() { for (const k of PET_KEYS) if (!ownedPets.has(k)) spawnPetCheat(k); } },
+    { label: 'Clear Pets', run() { pets.length = 0; ownedPets.clear(); } },
+  ]},
 ];
 
 // Cheats panel stat sliders — read/write player fields directly.
@@ -3421,6 +3440,14 @@ function buyPet(id) {
   if (ownedPets.has(id)) return;
   if (player.money < def.cost) return;
   player.money -= def.cost;
+  spawnPetCheat(id);
+}
+
+// Free spawn — used by the cheats panel and shared with buyPet for the
+// actual pet-join effects. Returns silently if the pet is already owned.
+function spawnPetCheat(id) {
+  const def = PETS[id];
+  if (!def || ownedPets.has(id)) return;
   ownedPets.add(id);
   pets.push({ id, x: player.x + 30, y: player.y + 30, vx: 0, vy: 0, lastAttack: 0, heading: 0, orbitAng: Math.random() * Math.PI * 2 });
   floaters.push({ x: player.x, y: player.y - 22, text: `${def.name} joined you`, life: 2.0, color: def.color });
