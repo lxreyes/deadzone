@@ -1399,6 +1399,11 @@ const cheatSections = [
         beginNextWave();
       } },
     { label: 'Spawn Boss', run() { spawnBoss(); } },
+    { label: 'Boss: Warlord',     run() { spawnSpecificBoss('warlord'); } },
+    { label: 'Boss: Necromancer', run() { spawnSpecificBoss('necromancer'); } },
+    { label: 'Boss: Charger',     run() { spawnSpecificBoss('charger'); } },
+    { label: 'Boss: Hex Mage',    run() { spawnSpecificBoss('hexmage'); } },
+    { label: 'Boss: Berserker',   run() { spawnSpecificBoss('berserker'); } },
     { label: 'Kill All', run() {
         for (const z of zombies) {
           if (!z.isDummy) kills++;
@@ -3338,6 +3343,28 @@ function edgeSpawnPoint() {
 // Each entry holds the base stats + behavior knobs for one zombie type.
 // `gate` is the lowest wave the type can appear from (rollType respects it).
 // `weight(w)` returns the relative spawn chance at wave w (capped internally).
+// Boss archetypes cycled in order on each boss wave (every 20th wave).
+// Each entry tweaks the base boss stats and tags the spawned zombie with a
+// `bossType` field so updateZombies + render branches per type. Order
+// matters — players will see them in this order across runs.
+const BOSS_TYPES = [
+  { id: 'warlord',     name: 'The Warlord',     color: '#9a2828', auraColor: '255, 60, 60',
+    hpMul: 1.00, dmgMul: 1.00, speedMul: 1.00,
+    desc: 'Summons minions while alive' },
+  { id: 'necromancer', name: 'The Necromancer', color: '#7a3a9a', auraColor: '196, 126, 255',
+    hpMul: 0.85, dmgMul: 0.90, speedMul: 0.80,
+    desc: 'Raises the dead in larger waves' },
+  { id: 'charger',     name: 'The Charger',     color: '#d36030', auraColor: '255, 140, 60',
+    hpMul: 1.05, dmgMul: 1.30, speedMul: 1.10,
+    desc: 'Winds up + lunges at the player' },
+  { id: 'hexmage',     name: 'The Hex Mage',    color: '#3a7aa0', auraColor: '122, 200, 240',
+    hpMul: 0.80, dmgMul: 0.85, speedMul: 0.65,
+    desc: 'Hurls homing hex bolts from afar' },
+  { id: 'berserker',   name: 'The Berserker',   color: '#1a1a22', auraColor: '255, 80, 80',
+    hpMul: 1.20, dmgMul: 1.10, speedMul: 0.95,
+    desc: 'Gets faster and angrier the more it bleeds' },
+];
+
 const ZOMBIE_TYPES = {
   normal:   { hp: 22, speed: 62,  damage: 14, r: 12, color: '#5e8c4a', money: 3,  exp: 1, gate: 0 },
   fast:     { hp: 14, speed: 120, damage: 10, r: 9,  color: '#a85040', money: 5,  exp: 2, gate: 2 },
@@ -3476,24 +3503,74 @@ function spawnTrainerDummy() {
 
 function spawnBoss() {
   const bossNum = Math.max(1, Math.floor(wave / 20));
+  const def = BOSS_TYPES[(bossNum - 1) % BOSS_TYPES.length];
   const { x, y } = edgeSpawnPoint();
   // Each successive boss is significantly tougher than the last on top of the
   // existing additive scaling — a 1.25x multiplier per boss compounds quickly.
   const scale = Math.pow(1.25, bossNum - 1);
-  const hp = Math.ceil((600 + bossNum * 500) * scale);
+  const baseHp = (600 + bossNum * 500) * scale * def.hpMul;
+  const baseSpeed = (50 + bossNum * 7) * def.speedMul;
+  const baseDamage = (40 + bossNum * 12) * Math.pow(1.10, bossNum - 1) * def.dmgMul;
   zombies.push({
     x, y, type: 'boss', isBoss: true,
     bossNum,
+    bossType: def.id,
+    bossName: def.name,
+    bossColor: def.color,
+    bossAura: def.auraColor,
     r: 32 + bossNum * 3,
-    color: '#9a2828',
-    speed: 50 + bossNum * 7,
-    hp, hpMax: hp,
-    damage: Math.ceil((40 + bossNum * 12) * Math.pow(1.10, bossNum - 1)),
+    color: def.color,
+    speed: baseSpeed,
+    baseSpeed,                              // berserker / charger restore from this
+    hp: Math.ceil(baseHp), hpMax: Math.ceil(baseHp),
+    damage: Math.ceil(baseDamage),
+    baseDamage: Math.ceil(baseDamage),      // berserker scales damage off this
     money: 200 + bossNum * 120,
     expReward: 30 + bossNum * 20,
     minionTimer: 4 + Math.random() * 1.5,
+    chargeTimer: 4 + Math.random() * 2,     // Charger wind-up cycle
+    charging: false, chargeDur: 0,
+    shotTimer: 1.5 + Math.random() * 1.0,   // Hex Mage shot cycle
     phase: Math.random() * Math.PI * 2,
   });
+}
+
+// Cheat helper — spawn a boss of a specific archetype. Temporarily forces the
+// wave-derived bossNum to one that maps to the requested type, calls
+// spawnBoss, then restores the real wave. Stats still scale from the real
+// wave so the spawn doesn't feel free.
+function spawnSpecificBoss(id) {
+  const idx = BOSS_TYPES.findIndex(b => b.id === id);
+  if (idx < 0) return;
+  const realWave = wave;
+  // Want a bossNum where (bossNum - 1) % BOSS_TYPES.length === idx and the
+  // resulting stats roughly match the current wave's scaling.
+  const realBossNum = Math.max(1, Math.floor(realWave / 20));
+  const cycle = Math.max(1, Math.ceil(realBossNum / BOSS_TYPES.length));
+  const targetBossNum = (cycle - 1) * BOSS_TYPES.length + idx + 1;
+  wave = targetBossNum * 20;
+  spawnBoss();
+  wave = realWave;
+}
+
+// Hex Mage projectile — a slow, fat homing-feel bolt fired at the player.
+// Uses the existing zombieBullets array so collision + player damage work
+// without any new pipeline.
+function spawnHexBolt(z, n = 1) {
+  for (let i = 0; i < n; i++) {
+    const spread = (i - (n - 1) / 2) * 0.22;
+    const a = Math.atan2(player.y - z.y, player.x - z.x) + spread;
+    const sp = 240;
+    zombieBullets.push({
+      x: z.x, y: z.y,
+      vx: Math.cos(a) * sp,
+      vy: Math.sin(a) * sp,
+      r: 8,
+      dmg: Math.ceil(z.damage * 0.35),
+      life: 3.5,
+      color: '#a0c8e8',
+    });
+  }
 }
 
 function spawnBossMinions(boss, n) {
@@ -5291,12 +5368,85 @@ function updateZombies(dt) {
     z.x = Math.max(-z.r, Math.min(W + z.r, z.x));
     z.y = Math.max(-z.r, Math.min(H + z.r, z.y));
 
-    // boss periodically summons minions
+    // Boss type dispatch — each archetype has its own signature ability.
     if (z.isBoss) {
-      z.minionTimer -= dt;
-      if (z.minionTimer <= 0) {
-        z.minionTimer = 4 + Math.random() * 2;
-        spawnBossMinions(z, 3);
+      switch (z.bossType) {
+        case 'warlord':
+        default: {
+          z.minionTimer -= dt;
+          if (z.minionTimer <= 0) {
+            z.minionTimer = 4 + Math.random() * 2;
+            spawnBossMinions(z, 3);
+          }
+          break;
+        }
+        case 'necromancer': {
+          // Slower cadence but a bigger swarm — feels like a tide of dead.
+          z.minionTimer -= dt;
+          if (z.minionTimer <= 0) {
+            z.minionTimer = 6 + Math.random() * 2;
+            spawnBossMinions(z, 6);
+            // Burst of purple particles for flavor
+            for (let k = 0; k < 22; k++) {
+              const a = Math.random() * Math.PI * 2;
+              const s = 80 + Math.random() * 220;
+              particles.push({ x: z.x, y: z.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s, life: 0.55, color: k % 2 ? '#c47eff' : '#3a1a5a' });
+            }
+          }
+          break;
+        }
+        case 'charger': {
+          // Cycle: idle → brief wind-up → charge boost → idle.
+          if (z.charging) {
+            z.chargeDur -= dt;
+            if (z.chargeDur <= 0) {
+              z.charging = false;
+              z.speed = z.baseSpeed;
+              z.chargeTimer = 4 + Math.random() * 2;
+            }
+            // Trail particles during the charge
+            if (Math.random() < dt * 30) {
+              particles.push({ x: z.x, y: z.y, vx: (Math.random()-0.5)*60, vy: (Math.random()-0.5)*60, life: 0.4, color: '#ff9d3a' });
+            }
+          } else {
+            z.chargeTimer -= dt;
+            if (z.chargeTimer <= 0) {
+              // Wind-up flash then accelerate
+              z.charging = true;
+              z.chargeDur = 1.4;
+              z.speed = z.baseSpeed * 4.2;
+              for (let k = 0; k < 24; k++) {
+                const a = Math.random() * Math.PI * 2;
+                const s = 80 + Math.random() * 180;
+                particles.push({ x: z.x, y: z.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s, life: 0.4, color: '#ffce44' });
+              }
+              shake(4);
+            }
+          }
+          break;
+        }
+        case 'hexmage': {
+          // Fires arcing hex bolts at the player on a fixed cadence. Uses
+          // the existing zombieBullets pipeline so collision + damage work.
+          z.shotTimer -= dt;
+          if (z.shotTimer <= 0 && d > 60) {
+            z.shotTimer = 1.5 + Math.random() * 0.8;
+            spawnHexBolt(z, 3);
+          }
+          break;
+        }
+        case 'berserker': {
+          // Rage scales with missing HP — at 0% HP missing the boss runs at
+          // base values; at 100% missing it nearly doubles them.
+          const rage = 1 - z.hp / z.hpMax;
+          z.speed  = z.baseSpeed  * (1 + rage * 0.85);
+          z.damage = z.baseDamage * (1 + rage * 0.60);
+          // Red rage particles trail at high rage
+          if (rage > 0.5 && Math.random() < dt * 18) {
+            particles.push({ x: z.x + (Math.random()-0.5)*z.r, y: z.y + (Math.random()-0.5)*z.r, vx: 0, vy: -40, life: 0.4, color: '#ff5050' });
+          }
+          break;
+        }
       }
     }
 
@@ -6470,11 +6620,13 @@ function render() {
       continue;
     }
     if (z.isBoss) {
-      // pulsing aura is drawn regardless so the boss still feels boss-y
+      // Aura tint from the boss's defined color so each archetype reads
+      // distinctly at a glance.
+      const aura = z.bossAura || '255, 60, 60';
       const pulse = 1 + Math.sin(gameTime * 4) * 0.08;
       const grad = ctx.createRadialGradient(z.x, z.y, z.r * 0.6, z.x, z.y, z.r * 2.2 * pulse);
-      grad.addColorStop(0, 'rgba(255, 60, 60, 0.35)');
-      grad.addColorStop(1, 'rgba(255, 60, 60, 0)');
+      grad.addColorStop(0, `rgba(${aura}, 0.35)`);
+      grad.addColorStop(1, `rgba(${aura}, 0)`);
       ctx.fillStyle = grad;
       ctx.beginPath(); ctx.arc(z.x, z.y, z.r * 2.2 * pulse, 0, Math.PI*2); ctx.fill();
       if (hasCustomSprite(spriteId)) {
@@ -6491,6 +6643,52 @@ function render() {
         const eo = z.r * 0.35;
         ctx.beginPath(); ctx.arc(z.x - eo, z.y - eo*0.3, 4, 0, Math.PI*2); ctx.fill();
         ctx.beginPath(); ctx.arc(z.x + eo, z.y - eo*0.3, 4, 0, Math.PI*2); ctx.fill();
+        // Per-archetype flourish painted on top of the body
+        if (z.bossType === 'necromancer') {
+          // Floating skull glyph in white
+          ctx.fillStyle = '#fff';
+          ctx.beginPath(); ctx.arc(z.x, z.y, z.r * 0.32, 0, Math.PI*2); ctx.fill();
+          ctx.fillStyle = '#1a1a22';
+          ctx.beginPath();
+          ctx.arc(z.x - z.r * 0.12, z.y - z.r * 0.05, z.r * 0.06, 0, Math.PI*2);
+          ctx.arc(z.x + z.r * 0.12, z.y - z.r * 0.05, z.r * 0.06, 0, Math.PI*2); ctx.fill();
+        } else if (z.bossType === 'charger') {
+          // Horns / spikes pointing forward
+          const ang = Math.atan2(player.y - z.y, player.x - z.x);
+          ctx.fillStyle = '#fff5b8';
+          for (const s of [-0.45, 0, 0.45]) {
+            const a = ang + s;
+            ctx.beginPath();
+            ctx.moveTo(z.x + Math.cos(a) * z.r, z.y + Math.sin(a) * z.r);
+            ctx.lineTo(z.x + Math.cos(a) * z.r * 1.55, z.y + Math.sin(a) * z.r * 1.55);
+            ctx.lineTo(z.x + Math.cos(a + 0.12) * z.r * 1.05, z.y + Math.sin(a + 0.12) * z.r * 1.05);
+            ctx.closePath(); ctx.fill();
+          }
+        } else if (z.bossType === 'hexmage') {
+          // Three small glowing orbs orbit the body
+          for (let k = 0; k < 3; k++) {
+            const a = gameTime * 1.6 + (k / 3) * Math.PI * 2;
+            const ox = z.x + Math.cos(a) * (z.r * 1.35);
+            const oy = z.y + Math.sin(a) * (z.r * 1.35);
+            ctx.fillStyle = 'rgba(160, 200, 232, 0.55)';
+            ctx.beginPath(); ctx.arc(ox, oy, 5, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = '#fff';
+            ctx.beginPath(); ctx.arc(ox, oy, 1.8, 0, Math.PI*2); ctx.fill();
+          }
+        } else if (z.bossType === 'berserker') {
+          // Red rage cracks across the body at high rage
+          const rage = 1 - z.hp / z.hpMax;
+          if (rage > 0.3) {
+            ctx.strokeStyle = `rgba(255, 64, 64, ${rage})`;
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.moveTo(z.x - z.r * 0.5, z.y - z.r * 0.2);
+            ctx.lineTo(z.x - z.r * 0.1, z.y + z.r * 0.05);
+            ctx.lineTo(z.x + z.r * 0.3, z.y - z.r * 0.25);
+            ctx.lineTo(z.x + z.r * 0.55, z.y + z.r * 0.1);
+            ctx.stroke();
+          }
+        }
       }
     } else {
       if (hasCustomSprite(spriteId)) {
@@ -9395,7 +9593,8 @@ function drawWaveBanner() {
       ctx.fillStyle = '#fff';
       ctx.font = 'bold 12px system-ui';
       ctx.textAlign = 'center';
-      ctx.fillText(`BOSS — WAVE ${wave}`, W / 2, by + 13);
+      const bossLabel = boss.bossName ? `${boss.bossName.toUpperCase()}  ·  WAVE ${wave}` : `BOSS — WAVE ${wave}`;
+      ctx.fillText(bossLabel, W / 2, by + 13);
       ctx.textAlign = 'left';
     }
   }
@@ -9410,7 +9609,15 @@ function drawWaveBanner() {
     ctx.font = 'bold 22px system-ui';
     ctx.textAlign = 'center';
     const next = wave + 1;
-    const label = (next % 20 === 0) ? `BOSS WAVE ${next}` : `Wave ${next}`;
+    let label;
+    if (next % 20 === 0) {
+      // Preview the next boss's name on the intermission banner
+      const nextBossNum = Math.max(1, Math.floor(next / 20));
+      const nextBossDef = BOSS_TYPES[(nextBossNum - 1) % BOSS_TYPES.length];
+      label = `BOSS WAVE ${next}  ·  ${nextBossDef.name}`;
+    } else {
+      label = `Wave ${next}`;
+    }
     ctx.fillText(label, W / 2, H / 2 - 100);
     ctx.fillStyle = '#9aa0ab';
     ctx.font = '13px system-ui';
