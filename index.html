@@ -1244,6 +1244,13 @@ const cheatSections = [
       run() { player.abilities.storm = true; } },
     { label: 'Unlock All', run() { for (const k of ABILITY_KEYS) player.abilities[k] = true; } },
   ]},
+  { id: 'events', name: 'Arena Events', open: false, items: [
+    { label: '+Supply Drop', run() { fireArenaEvent('supplyDrop'); } },
+    { label: '+Horde Push',  run() { fireArenaEvent('hordePush'); } },
+    { label: '+Blackout',    run() { fireArenaEvent('blackout'); } },
+    { label: '+Heal Zone',   run() { fireArenaEvent('healZone'); } },
+    { label: 'Clear Active', run() { activeEvent = null; pendingEvent = null; } },
+  ]},
   { id: 'pets', name: 'Pets', open: false, items: [
     { label: () => `Dog: ${ownedPets.has('dog') ? 'OWNED' : 'spawn'}`,
       toggle: () => ownedPets.has('dog'),
