@@ -1310,11 +1310,17 @@ let cheatsOpen = false;
 let godMode    = false;
 let cheatsHeaderRect = null;
 // Panel position is mutable now — the user can drag the header to move it.
-const cheatsPanel = { x: 14, y: 168, w: 168 };
+const cheatsPanel = { x: 14, y: 168, w: 420 };
 let cheatsDrag = null;       // { offX, offY, moved } while dragging the panel
+let cheatsResize = null;     // { startX, startW } while dragging the right-edge handle
+let cheatsResizeRect = null; // hit-test for the resize handle (populated each frame)
 let sliderDrag = null;       // { slider } while dragging a stat slider
 let slidersOpen = false;     // STATS section default-collapsed; user can expand
 let slidersHeaderRect = null;
+// Tab system inside the cheats panel — 'general' has the gameplay sections;
+// 'weapons' has all the per-category primary/secondary equip lists.
+let cheatsTab = 'general';
+let cheatsTabRects = [];
 let buildToolbarRects = null; // populated each frame by drawBuildToolbar
 
 // Each cheat: label (string or () => string) + run() to execute.
@@ -2530,6 +2536,13 @@ c.addEventListener('mousemove', e => {
     cheatsPanel.x = Math.max(0, Math.min(W - cheatsPanel.w, mouse.x - cheatsDrag.offX));
     cheatsPanel.y = Math.max(0, Math.min(H - 30, mouse.y - cheatsDrag.offY));
   }
+  // resizing the cheats panel by dragging its right-edge handle
+  if (cheatsResize) {
+    const delta = mouse.x - cheatsResize.startX;
+    cheatsPanel.w = Math.max(220, Math.min(900, cheatsResize.startW + delta));
+    // Keep the panel inside the canvas after a resize
+    cheatsPanel.x = Math.max(0, Math.min(W - cheatsPanel.w, cheatsPanel.x));
+  }
   // dragging a stat slider
   if (sliderDrag && sliderDrag.slider.rect) {
     sliderDrag.slider.set(sliderValueAt(sliderDrag.slider, mouse.x));
@@ -2601,7 +2614,20 @@ c.addEventListener('mousedown', e => {
     cheatsDrag = { offX: mouse.x - cheatsPanel.x, offY: mouse.y - cheatsPanel.y, moved: false };
     return;
   }
+  // resize handle on the right edge of an open cheats panel
+  if (cheatsOpen && cheatsResizeRect && pointInRect(mouse, cheatsResizeRect)) {
+    cheatsResize = { startX: mouse.x, startW: cheatsPanel.w };
+    return;
+  }
   if (cheatsOpen) {
+    // tab bar — switch between general / weapons
+    for (const tab of cheatsTabRects) {
+      if (pointInRect(mouse, tab)) {
+        cheatsTab = tab.id;
+        SFX.uiClick();
+        return;
+      }
+    }
     // section headers toggle their group open/closed
     for (const sec of cheatSections) {
       if (sec.headerRect && pointInRect(mouse, sec.headerRect)) {
@@ -2674,6 +2700,7 @@ addEventListener('mouseup', e => {
     if (!cheatsDrag.moved) { cheatsOpen = !cheatsOpen; SFX.uiClick(); }
     cheatsDrag = null;
   }
+  cheatsResize = null;
   sliderDrag = null;
   // commit sprite edits to localStorage when the player releases the brush
   if (spriteEditorPaint) {
@@ -8179,7 +8206,9 @@ function drawCheats() {
   // hidden until the player enters the unlock code
   if (!cheatsUnlocked) {
     cheatsHeaderRect = null;
+    cheatsResizeRect = null;
     slidersHeaderRect = null;
+    cheatsTabRects = [];
     for (const sec of cheatSections) {
       sec.headerRect = null;
       for (const c of sec.items) c.rect = null;
@@ -8189,16 +8218,23 @@ function drawCheats() {
   }
   const x = cheatsPanel.x, y = cheatsPanel.y;
   const header = 26, secHeaderH = 24;
-  // Vertical section list, but each open section lays its items out as a
-  // horizontal grid that wraps across rows. Sliders stay vertical (they're
-  // wide and benefit from one-per-row).
-  const w = 420;
+  const tabH = 22; // height of the tab bar shown when panel is open
+  // Panel width is user-resizable via the right-edge handle (clamped in
+  // mousemove). Items per row is computed from the current width.
+  const w = cheatsPanel.w;
   const padPanel = 6;
   const itemW = 100;
   const itemH = 22;
   const itemGap = 2;
   const sliderRowH = 22;
   const itemsPerRow = Math.max(1, Math.floor((w - padPanel * 2) / (itemW + itemGap)));
+  // Section taxonomy: which tab each section belongs to.
+  const isWeaponSec = (sec) => sec.id.startsWith('primary-') || sec.id.startsWith('secondary-');
+  const visibleSections = cheatSections.filter(sec => {
+    return cheatsTab === 'weapons' ? isWeaponSec(sec) : !isWeaponSec(sec);
+  });
+  // STATS slider section only shows on the 'general' tab — it's not weapons.
+  const showSliders = cheatsTab === 'general';
   // Compute body height by walking the same layout we'll use below
   function sectionContentH(sec) {
     if (!sec.open) return 0;
@@ -8207,11 +8243,14 @@ function drawCheats() {
   }
   let bodyH = 0;
   if (cheatsOpen) {
-    for (const sec of cheatSections) {
+    bodyH += tabH + 4; // tab bar
+    for (const sec of visibleSections) {
       bodyH += secHeaderH + 2 + sectionContentH(sec);
     }
-    bodyH += secHeaderH + 2;
-    if (slidersOpen) bodyH += cheatSliders.length * (sliderRowH + 2) + 6;
+    if (showSliders) {
+      bodyH += secHeaderH + 2;
+      if (slidersOpen) bodyH += cheatSliders.length * (sliderRowH + 2) + 6;
+    }
   }
   const h = cheatsOpen ? header + bodyH + 6 : header;
   // Outer panel — slightly more opaque than before, single-pixel border
@@ -8247,6 +8286,8 @@ function drawCheats() {
 
   if (!cheatsOpen) {
     slidersHeaderRect = null;
+    cheatsResizeRect = null;
+    cheatsTabRects = [];
     for (const sec of cheatSections) {
       sec.headerRect = null;
       for (const c of sec.items) c.rect = null;
@@ -8255,8 +8296,43 @@ function drawCheats() {
     return;
   }
 
+  // ---- Tab bar (general / weapons) ----
+  const tabs = [
+    { id: 'general', label: 'General', color: '#7ec8ff' },
+    { id: 'weapons', label: 'Weapons', color: '#c47eff' },
+  ];
+  const tabY = y + header + 4;
+  const tabW = (w - padPanel * 2 - 4) / tabs.length;
+  cheatsTabRects = [];
+  for (let i = 0; i < tabs.length; i++) {
+    const t = tabs[i];
+    const tx = x + padPanel + i * (tabW + 4);
+    const active = cheatsTab === t.id;
+    const hover = pointInRect(mouse, { x: tx, y: tabY, w: tabW, h: tabH });
+    ctx.fillStyle = active ? t.color : (hover ? '#1c2030' : '#10131c');
+    ctx.fillRect(tx, tabY, tabW, tabH);
+    ctx.strokeStyle = active ? '#fff' : '#33363f';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(tx + 0.5, tabY + 0.5, tabW - 1, tabH - 1);
+    ctx.fillStyle = active ? '#0e1018' : '#cfd3da';
+    ctx.font = 'bold 11px system-ui';
+    ctx.textAlign = 'center';
+    ctx.fillText(t.label, tx + tabW / 2, tabY + 15);
+    cheatsTabRects.push({ x: tx, y: tabY, w: tabW, h: tabH, id: t.id });
+  }
+  ctx.textAlign = 'left';
+
   // ---- Vertical section list with horizontal-wrap items per open section ----
-  let by = y + header + 4;
+  let by = tabY + tabH + 4;
+
+  // Clear hit-rects for sections on the inactive tab so clicks don't fire
+  // through to invisible items.
+  for (const sec of cheatSections) {
+    if (!visibleSections.includes(sec)) {
+      sec.headerRect = null;
+      for (const c of sec.items) c.rect = null;
+    }
+  }
 
   // Helper that draws a full-width section header (vertical-stack style).
   const drawSectionHeader = (sec, accent, name, isStats = false) => {
@@ -8290,7 +8366,7 @@ function drawCheats() {
     ctx.textAlign = 'left';
   };
 
-  for (const sec of cheatSections) {
+  for (const sec of visibleSections) {
     const accent = cheatSectionColor(sec.id);
     drawSectionHeader(sec, accent, sec.name);
     by += secHeaderH + 2;
@@ -8354,53 +8430,69 @@ function drawCheats() {
     by = iy + (col > 0 ? itemH + itemGap : 0) + 4;
   }
 
-  // STATS section — header (full width) + sliders below (vertical, full width)
-  const statsColor = '#9aa0ab';
-  drawSectionHeader(null, statsColor, 'Stats', true);
-  by += secHeaderH + 2;
+  // STATS section — only on the General tab (it's not weapons)
+  if (showSliders) {
+    const statsColor = '#9aa0ab';
+    drawSectionHeader(null, statsColor, 'Stats', true);
+    by += secHeaderH + 2;
 
-  if (!slidersOpen) {
+    if (slidersOpen) {
+      // Sliders stacked vertically — each spans the full panel width
+      const trackX = x + padPanel + 90;
+      const trackW = w - padPanel * 2 - 90 - 40;
+      const knobR = 5;
+      for (const s of cheatSliders) {
+        const rect = { x: x + padPanel, y: by, w: w - padPanel * 2, h: sliderRowH, trackX, trackW, trackY: by + 11 };
+        s.rect = rect;
+        ctx.fillStyle = '#9aa0ab';
+        ctx.font = 'bold 10px system-ui';
+        ctx.textAlign = 'left';
+        ctx.fillText(s.label, x + padPanel + 6, by + 14);
+        // Track
+        ctx.fillStyle = '#1c1f28';
+        ctx.fillRect(trackX, by + 8, trackW, 6);
+        ctx.strokeStyle = '#33363f';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(trackX, by + 8, trackW, 6);
+        // Fill + knob
+        const val = s.get();
+        const t = Math.max(0, Math.min(1, (val - s.min) / (s.max - s.min)));
+        ctx.fillStyle = '#5a87c4';
+        ctx.fillRect(trackX, by + 8, trackW * t, 6);
+        ctx.fillStyle = sliderDrag && sliderDrag.slider === s ? '#fff' : '#88aadd';
+        ctx.beginPath();
+        ctx.arc(trackX + trackW * t, by + 11, knobR, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = '#0a0a0a';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.fillStyle = '#fff';
+        ctx.font = 'bold 10px system-ui';
+        ctx.textAlign = 'right';
+        const display = s.step < 1 ? val.toFixed(1) : Math.round(val).toString();
+        ctx.fillText(display, x + w - padPanel - 4, by + 14);
+        ctx.textAlign = 'left';
+        by += sliderRowH + 2;
+      }
+    } else {
+      for (const s of cheatSliders) s.rect = null;
+    }
+  } else {
+    // STATS hidden on the weapons tab — clear its hit-rects
+    slidersHeaderRect = null;
     for (const s of cheatSliders) s.rect = null;
-    return;
   }
 
-  // Sliders stacked vertically — each spans the full panel width
-  const trackX = x + padPanel + 90;
-  const trackW = w - padPanel * 2 - 90 - 40;
-  const knobR = 5;
-  for (const s of cheatSliders) {
-    const rect = { x: x + padPanel, y: by, w: w - padPanel * 2, h: sliderRowH, trackX, trackW, trackY: by + 11 };
-    s.rect = rect;
-    ctx.fillStyle = '#9aa0ab';
-    ctx.font = 'bold 10px system-ui';
-    ctx.textAlign = 'left';
-    ctx.fillText(s.label, x + padPanel + 6, by + 14);
-    // Track
-    ctx.fillStyle = '#1c1f28';
-    ctx.fillRect(trackX, by + 8, trackW, 6);
-    ctx.strokeStyle = '#33363f';
-    ctx.lineWidth = 1;
-    ctx.strokeRect(trackX, by + 8, trackW, 6);
-    // Fill + knob
-    const val = s.get();
-    const t = Math.max(0, Math.min(1, (val - s.min) / (s.max - s.min)));
-    ctx.fillStyle = '#5a87c4';
-    ctx.fillRect(trackX, by + 8, trackW * t, 6);
-    ctx.fillStyle = sliderDrag && sliderDrag.slider === s ? '#fff' : '#88aadd';
-    ctx.beginPath();
-    ctx.arc(trackX + trackW * t, by + 11, knobR, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = '#0a0a0a';
-    ctx.lineWidth = 1;
-    ctx.stroke();
-    ctx.fillStyle = '#fff';
-    ctx.font = 'bold 10px system-ui';
-    ctx.textAlign = 'right';
-    const display = s.step < 1 ? val.toFixed(1) : Math.round(val).toString();
-    ctx.fillText(display, x + w - padPanel - 4, by + 14);
-    ctx.textAlign = 'left';
-    by += sliderRowH + 2;
-  }
+  // Resize handle on the right edge — drag to resize the panel width.
+  // Two thin vertical bars hint at "grippable" without being noisy.
+  const handleW = 8;
+  cheatsResizeRect = { x: x + w - handleW, y: y + header + 2, w: handleW, h: h - header - 4 };
+  const hovHandle = pointInRect(mouse, cheatsResizeRect) || cheatsResize;
+  ctx.fillStyle = hovHandle ? '#5a87c4' : '#3a3d46';
+  const barH = Math.max(20, cheatsResizeRect.h - 12);
+  const barY = cheatsResizeRect.y + (cheatsResizeRect.h - barH) / 2;
+  ctx.fillRect(cheatsResizeRect.x + 2, barY, 2, barH);
+  ctx.fillRect(cheatsResizeRect.x + 5, barY, 2, barH);
 }
 
 // Convert a slider's mouse-x into its bound value, snapped to its step.
