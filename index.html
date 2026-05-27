@@ -540,6 +540,8 @@ const player = {
   dashCooldown: 1.4,
   dashDistance: 170,
   dashInvuln: 0.45,
+  // EXP currency used by the upgrade tree (T key)
+  exp: 0,
   buffs: { triple: 0, rapid: 0, fast: 0, shield: 0 },
   // Stacked perk effects picked from the post-wave card draw.
   // Effective values; parallel specialLevels tracks pick counts for display.
@@ -726,6 +728,44 @@ let trainingMode = false;
 let hasGame = false; // set true after first Play/Training; controls Resume visibility
 let menuButtons = [];     // populated by the active menu draw fn each frame
 let settingsView = 'main'; // 'main' or 'sprites'
+
+// ---------- Upgrade tree (bought with EXP from zombie kills, T to open) ----------
+// Three branches, four upgrades per branch, bought in order. Each upgrade
+// applies a permanent effect immediately and stays bought through hardReset...
+// actually we reset it on hardReset so each run is a fresh tree.
+const UPGRADE_TREE = {
+  combat: {
+    name: 'Combat', color: '#ff7070',
+    nodes: [
+      { name: 'Sharper Bullets', desc: '+8 damage',          cost: 12,  apply() { player.damage += 8; } },
+      { name: 'Faster Trigger',  desc: '+2 fire rate',       cost: 28,  apply() { player.fireRate += 2; } },
+      { name: 'Piercer',         desc: '+2 pierce',          cost: 60,  apply() { player.pierce += 2; } },
+      { name: 'Overkill',        desc: '+20 damage',         cost: 120, apply() { player.damage += 20; } },
+    ],
+  },
+  survival: {
+    name: 'Survival', color: '#5cd86b',
+    nodes: [
+      { name: 'Tougher',         desc: '+50 Max HP, heal',   cost: 12,  apply() { player.maxHp += 50; player.hp = Math.min(player.maxHp, player.hp + 50); } },
+      { name: 'Regenerate',      desc: '+1 HP / second',     cost: 28,  apply() { player.special.regen = (player.special.regen || 0) + 1; } },
+      { name: 'Quick Step',      desc: '+50 move speed',     cost: 50,  apply() { player.speed += 50; } },
+      { name: 'Iron Body',       desc: '+150 Max HP, heal',  cost: 110, apply() { player.maxHp += 150; player.hp = Math.min(player.maxHp, player.hp + 150); } },
+    ],
+  },
+  economy: {
+    name: 'Economy', color: '#ffd166',
+    nodes: [
+      { name: 'Greedy',          desc: '+30% money on kill', cost: 12,  apply() { player.special.greed = (player.special.greed || 0) + 0.30; } },
+      { name: 'Magnetic',        desc: '+50% coin range',    cost: 24,  apply() { player.special.magnet = (player.special.magnet || 0) + 0.50; } },
+      { name: 'Vampire',         desc: '+4 HP per zombie',   cost: 50,  apply() { player.special.vampire = (player.special.vampire || 0) + 4; } },
+      { name: 'Lucky Strike',    desc: '+15% crit chance',   cost: 90,  apply() { player.special.crit = (player.special.crit || 0) + 0.15; } },
+    ],
+  },
+};
+const TREE_BRANCHES = Object.keys(UPGRADE_TREE);
+// How many nodes have been bought in each branch (0 = next one available).
+let treeLevels = { combat: 0, survival: 0, economy: 0 };
+let pendingBossDeath = null; // queued boss-kill nuke processed at tick boundary
 
 // ---------- Sprite editor (user-drawn pixel art replacing procedural visuals) ----------
 const SPRITE_SIZE = 16;
@@ -1576,7 +1616,14 @@ addEventListener('keydown', e => {
     if (gameState === 'playing')       { gameState = 'paused'; clearKeys(); SFX.uiClick(); updateMusicForState(); return; }
     if (gameState === 'paused')        { gameState = 'playing'; SFX.uiClick(); updateMusicForState(); return; }
     if (gameState === 'settings')      { gameState = hasGame ? 'paused' : 'menu'; SFX.uiClick(); updateMusicForState(); return; }
+    if (gameState === 'tree')          { gameState = 'playing'; SFX.uiClick(); return; }
     if (gameState === 'menu')          return;
+  }
+  // T closes the upgrade tree when it's open (toggle behavior)
+  if (e.code === 'KeyT' && gameState === 'tree') {
+    gameState = 'playing';
+    SFX.uiClick();
+    return;
   }
   // While a menu overlay is up, swallow other keys so movement/shoot stay frozen.
   if (gameState !== 'playing') return;
@@ -1586,6 +1633,11 @@ addEventListener('keydown', e => {
   if (e.code === 'KeyB' && !pendingCards) {
     buildMode = !buildMode;
     SFX.uiClick();
+  }
+  if (e.code === 'KeyT' && !pendingCards) {
+    gameState = 'tree';
+    SFX.uiClick();
+    return;
   }
   // card pick takes priority over everything else digit-related
   if (pendingCards) {
@@ -1872,7 +1924,15 @@ function killZombie(z) {
   if (player.special.vampire) {
     player.hp = Math.min(player.maxHp, player.hp + player.special.vampire);
   }
-  if (z.isBoss) spawnBossChest(z.x, z.y);
+  // EXP drop — small per normal kill, large per boss kill (scales per bossNum)
+  player.exp += z.expReward || 1;
+  if (z.isBoss) {
+    spawnBossChest(z.x, z.y);
+    // Queue a non-boss nuke at the boss position. We defer the actual
+    // detonation to the start of the next tick so the kill site can finish
+    // its iteration without the zombies array being mutated mid-loop.
+    pendingBossDeath = { x: z.x, y: z.y };
+  }
   SFX.zombieDie();
 }
 
@@ -1977,6 +2037,7 @@ function spawnZombie() {
     hp, hpMax: hp,
     damage: base.damage * dmgMul,
     money: Math.ceil(base.money * moneyMul),
+    expReward: type === 'tank' ? 4 : (type === 'fast' ? 2 : 1),
     phase: Math.random() * Math.PI * 2,
   });
 }
@@ -2001,6 +2062,7 @@ function spawnSpecific(type) {
     hp, hpMax: hp,
     damage: base.damage * dmgMul,
     money: Math.ceil(base.money * moneyMul),
+    expReward: type === 'tank' ? 4 : (type === 'fast' ? 2 : 1),
     phase: Math.random() * Math.PI * 2,
   });
 }
@@ -2008,6 +2070,20 @@ function spawnSpecific(type) {
 // Trainer dummy — stationary punching bag at the center of the arena. Massive
 // HP, no movement, no contact damage. Shows damage floaters when hit so the
 // player can see exactly how much each weapon dishes out.
+function buyTreeUpgrade(branch) {
+  const tree = UPGRADE_TREE[branch];
+  if (!tree) return;
+  const level = treeLevels[branch] || 0;
+  if (level >= tree.nodes.length) return;
+  const node = tree.nodes[level];
+  if (player.exp < node.cost) return;
+  player.exp -= node.cost;
+  node.apply();
+  treeLevels[branch] = level + 1;
+  floaters.push({ x: player.x, y: player.y - 22, text: node.name, life: 1.6, color: tree.color });
+  SFX.perkPick();
+}
+
 function spawnTrainerDummy() {
   zombies.push({
     x: W / 2, y: H / 2,
@@ -2026,15 +2102,20 @@ function spawnTrainerDummy() {
 function spawnBoss() {
   const bossNum = Math.max(1, Math.floor(wave / 20));
   const { x, y } = edgeSpawnPoint();
-  const hp = 400 + bossNum * 400;
+  // Each successive boss is significantly tougher than the last on top of the
+  // existing additive scaling — a 1.25x multiplier per boss compounds quickly.
+  const scale = Math.pow(1.25, bossNum - 1);
+  const hp = Math.ceil((600 + bossNum * 500) * scale);
   zombies.push({
     x, y, type: 'boss', isBoss: true,
+    bossNum,
     r: 32 + bossNum * 3,
     color: '#9a2828',
-    speed: 45 + bossNum * 6,
+    speed: 50 + bossNum * 7,
     hp, hpMax: hp,
-    damage: 32 + bossNum * 8,
-    money: 150 + bossNum * 90,
+    damage: Math.ceil((40 + bossNum * 12) * Math.pow(1.10, bossNum - 1)),
+    money: 200 + bossNum * 120,
+    expReward: 30 + bossNum * 20,
     minionTimer: 4 + Math.random() * 1.5,
     phase: Math.random() * Math.PI * 2,
   });
@@ -2781,9 +2862,10 @@ function chainLightning(fromZ, baseDmg, count, range) {
 }
 
 function explode(x, y, radius, dmg) {
-  // damage zombies in radius
+  // damage zombies in radius — bosses are immune to splash damage
   for (let j = zombies.length - 1; j >= 0; j--) {
     const z = zombies[j];
+    if (z.isBoss) continue;
     const dx = z.x - x, dy = z.y - y;
     if (dx*dx + dy*dy < radius * radius) {
       const dmgDealt = Math.min(dmg, z.hp);
@@ -2810,13 +2892,21 @@ function explode(x, y, radius, dmg) {
 }
 
 function detonateNuke(x, y) {
-  for (const z of zombies) {
+  // Skip bosses — they're immune. Walk a backwards index and splice each
+  // non-boss zombie individually so the array stays consistent.
+  for (let i = zombies.length - 1; i >= 0; i--) {
+    const z = zombies[i];
+    if (z.isBoss) continue;
     kills++;
     spawnDeathParticles(z.x, z.y, z.color);
     addBlood(z.x, z.y, z.isBoss ? 2 : 1);
     dropCoinsFor(z);
+    if (player.special.vampire) {
+      player.hp = Math.min(player.maxHp, player.hp + player.special.vampire);
+    }
+    player.exp += z.expReward || 1;
+    zombies.splice(i, 1);
   }
-  zombies.length = 0;
   for (let i = 0; i < 40; i++) {
     const a = Math.random() * Math.PI * 2;
     const s = 200 + Math.random() * 300;
@@ -3473,6 +3563,9 @@ function hardReset() {
   for (const k in player.buffs) player.buffs[k] = 0;
   player.special = {};
   player.specialLevels = {};
+  player.exp = 0;
+  treeLevels = { combat: 0, survival: 0, economy: 0 };
+  pendingBossDeath = null;
   pendingCards = null;
   cardRects = [null, null, null];
   bullets.length = 0;
@@ -4763,6 +4856,105 @@ function drawSpriteEditor() {
   ctx.textAlign = 'left';
 }
 
+function drawUpgradeTree() {
+  // dim everything behind
+  ctx.fillStyle = 'rgba(6, 8, 12, 0.75)';
+  ctx.fillRect(0, 0, W, H);
+
+  // title
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 32px system-ui';
+  ctx.textAlign = 'center';
+  ctx.fillText('UPGRADE TREE', W / 2, 56);
+  ctx.fillStyle = '#9aa0ab';
+  ctx.font = '13px system-ui';
+  ctx.fillText('spend EXP from kills to unlock permanent upgrades', W / 2, 80);
+
+  // EXP readout
+  ctx.fillStyle = '#7ec8ff';
+  ctx.font = 'bold 22px system-ui';
+  ctx.fillText(`${player.exp} EXP`, W / 2, 116);
+
+  menuButtons = [];
+
+  // Three columns of nodes
+  const colW = 280, colGap = 30;
+  const totalW = TREE_BRANCHES.length * colW + (TREE_BRANCHES.length - 1) * colGap;
+  let cx = (W - totalW) / 2;
+  for (const branchId of TREE_BRANCHES) {
+    const tree = UPGRADE_TREE[branchId];
+    const level = treeLevels[branchId] || 0;
+    // column header
+    ctx.fillStyle = tree.color;
+    ctx.font = 'bold 18px system-ui';
+    ctx.textAlign = 'center';
+    ctx.fillText(tree.name.toUpperCase(), cx + colW / 2, 156);
+    // vertical connector line
+    ctx.strokeStyle = '#22252e';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(cx + colW / 2, 176);
+    ctx.lineTo(cx + colW / 2, 176 + tree.nodes.length * 90);
+    ctx.stroke();
+    // nodes
+    for (let i = 0; i < tree.nodes.length; i++) {
+      const node = tree.nodes[i];
+      const ny = 180 + i * 90;
+      const owned = i < level;
+      const available = i === level;
+      const canAfford = available && player.exp >= node.cost;
+      const rect = { x: cx + 20, y: ny, w: colW - 40, h: 70, id: available ? `buy-${branchId}` : null };
+      const hover = available && pointInRect(mouse, rect);
+      // body
+      ctx.fillStyle = owned ? '#1c2a1c' : (available ? (hover ? '#1c2030' : '#11141c') : '#0a0c12');
+      ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+      ctx.strokeStyle = owned ? '#5cb85c' : (available ? tree.color : '#1c1e26');
+      ctx.lineWidth = owned ? 2 : (hover ? 3 : 1.5);
+      ctx.strokeRect(rect.x, rect.y, rect.w, rect.h);
+      // colored stripe at top edge
+      ctx.fillStyle = owned ? '#5cb85c' : tree.color;
+      ctx.fillRect(rect.x, rect.y, rect.w, 3);
+      // name
+      ctx.fillStyle = owned ? '#9aa0ab' : '#fff';
+      fitFont(node.name, rect.w - 24, 'bold 15px system-ui', 11);
+      ctx.textAlign = 'left';
+      ctx.fillText(node.name, rect.x + 12, rect.y + 22);
+      // desc
+      ctx.fillStyle = '#9aa0ab';
+      fitFont(node.desc, rect.w - 24, '12px system-ui', 9);
+      ctx.fillText(node.desc, rect.x + 12, rect.y + 40);
+      // cost / status
+      ctx.textAlign = 'right';
+      if (owned) {
+        ctx.fillStyle = '#5cb85c';
+        ctx.font = 'bold 12px system-ui';
+        ctx.fillText('OWNED', rect.x + rect.w - 12, rect.y + 58);
+      } else if (available) {
+        ctx.fillStyle = canAfford ? '#7ec8ff' : '#d33';
+        ctx.font = 'bold 13px system-ui';
+        ctx.fillText(`${node.cost} EXP`, rect.x + rect.w - 12, rect.y + 58);
+      } else {
+        ctx.fillStyle = '#5a5d66';
+        ctx.font = 'bold 11px system-ui';
+        ctx.fillText('LOCKED', rect.x + rect.w - 12, rect.y + 58);
+      }
+      // tier label on the left
+      ctx.fillStyle = '#5a5d66';
+      ctx.font = 'bold 10px system-ui';
+      ctx.textAlign = 'left';
+      ctx.fillText(`Tier ${i + 1}`, rect.x + 12, rect.y + 58);
+      if (available) menuButtons.push(rect);
+    }
+    cx += colW + colGap;
+  }
+
+  // close button
+  const closeRect = { x: W / 2 - 110, y: H - 76, w: 220, h: 48, id: 'tree-close' };
+  drawMenuButton(closeRect, 'Close  (T)', null, '#7ec8ff');
+  menuButtons.push(closeRect);
+  ctx.textAlign = 'left';
+}
+
 function drawTrainingBanner() {
   ctx.fillStyle = 'rgba(255, 209, 102, 0.18)';
   ctx.fillRect(0, H - 22, W, 22);
@@ -4858,6 +5050,16 @@ function handleMenuAction(id) {
       const s = ensureSprite(spriteEditorTarget);
       s.fill(0);
       saveSprites();
+      break;
+    }
+    case 'tree-close':
+      gameState = 'playing';
+      break;
+    case 'buy-combat':
+    case 'buy-survival':
+    case 'buy-economy': {
+      const branch = id.slice('buy-'.length);
+      buyTreeUpgrade(branch);
       break;
     }
   }
@@ -5380,6 +5582,10 @@ function drawHud() {
   ctx.fillStyle = '#ffce44';
   ctx.font = 'bold 20px system-ui';
   ctx.fillText(`$${player.money}`, 14, 56);
+  // EXP — sits next to money, used in the upgrade tree (T key)
+  ctx.fillStyle = '#7ec8ff';
+  ctx.font = 'bold 14px system-ui';
+  ctx.fillText(`${player.exp} EXP  ·  [T]`, 110, 54);
 
   // Wave line
   ctx.fillStyle = isBossWave ? '#ff7070' : '#7ec8ff';
@@ -5723,6 +5929,12 @@ function tick() {
 
   if (gameState === 'playing') {
     gameTime += dt;
+    // Process queued boss-death nuke before any other update — runs detonateNuke
+    // safely outside of any zombie-iteration loop that triggered the death.
+    if (pendingBossDeath) {
+      detonateNuke(pendingBossDeath.x, pendingBossDeath.y);
+      pendingBossDeath = null;
+    }
     updatePlayer(dt);
     if (mouse.down && !inShop() && !pendingCards) tryShoot(gameTime);
     updateBullets(dt);
@@ -5762,6 +5974,7 @@ function tick() {
   if (gameState === 'menu') drawMainMenu();
   else if (gameState === 'paused') drawPauseMenu();
   else if (gameState === 'settings') drawSettingsMenu();
+  else if (gameState === 'tree') drawUpgradeTree();
   if (trainingMode && gameState === 'playing') drawTrainingBanner();
 
   // Custom-drawn cursor — last to draw, sits on top of every UI layer.
