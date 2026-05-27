@@ -98,31 +98,57 @@ const SONG_MENU = {
 };
 
 const SONG_COMBAT = {
-  bpm: 120, bars: 8, beatsPerBar: 4, layer: 'combat',
+  bpm: 140, bars: 8, beatsPerBar: 4, layer: 'combat',
   tracks: [
-    // driving sawtooth bass — A minor → G → F → E descending progression
-    { type: 'sawtooth', vol: 0.30, notes: [
-      [0,'A1',0.5],[0.5,'A1',0.5],[1,'A1',0.5],[1.5,'E2',0.5],
-      [2,'A1',0.5],[2.5,'A1',0.5],[3,'A1',0.5],[3.5,'C2',0.5],
-      [4,'G1',0.5],[4.5,'G1',0.5],[5,'G1',0.5],[5.5,'D2',0.5],
-      [6,'G1',0.5],[6.5,'G1',0.5],[7,'G1',0.5],[7.5,'B1',0.5],
-      [8,'F1',0.5],[8.5,'F1',0.5],[9,'F1',0.5],[9.5,'C2',0.5],
-      [10,'F1',0.5],[10.5,'F1',0.5],[11,'F1',0.5],[11.5,'A1',0.5],
-      [12,'E1',0.5],[12.5,'E1',0.5],[13,'E1',0.5],[13.5,'B1',0.5],
-      [14,'E1',0.5],[14.5,'E1',0.5],[15,'E1',0.5],[15.5,'G1',0.5],
-      // second 4 bars — same progression with sparser hits to breathe
-      [16,'A1',1],[17,'A1',1],[18,'E2',1],[19,'A1',1],
-      [20,'G1',1],[21,'G1',1],[22,'D2',1],[23,'G1',1],
-      [24,'F1',1],[25,'F1',1],[26,'C2',1],[27,'F1',1],
-      [28,'E1',1],[29,'E1',1],[30,'B1',1],[31,'E1',1],
+    // Chugging alternating-octave bass — Am Am G G F F E E (one chord per 2 bars)
+    { kind: 'tone', type: 'sawtooth', vol: 0.32, notes: [
+      // Bars 1-2 — Am
+      [0,'A1',0.5],[0.5,'A2',0.5],[1,'A1',0.5],[1.5,'A2',0.5],
+      [2,'A1',0.5],[2.5,'A2',0.5],[3,'A1',0.5],[3.5,'E2',0.5],
+      [4,'A1',0.5],[4.5,'A2',0.5],[5,'A1',0.5],[5.5,'A2',0.5],
+      [6,'A1',0.5],[6.5,'A2',0.5],[7,'A1',0.5],[7.5,'C2',0.5],
+      // Bars 3-4 — G
+      [8,'G1',0.5],[8.5,'G2',0.5],[9,'G1',0.5],[9.5,'G2',0.5],
+      [10,'G1',0.5],[10.5,'G2',0.5],[11,'G1',0.5],[11.5,'D2',0.5],
+      [12,'G1',0.5],[12.5,'G2',0.5],[13,'G1',0.5],[13.5,'G2',0.5],
+      [14,'G1',0.5],[14.5,'G2',0.5],[15,'G1',0.5],[15.5,'B1',0.5],
+      // Bars 5-6 — F
+      [16,'F1',0.5],[16.5,'F2',0.5],[17,'F1',0.5],[17.5,'F2',0.5],
+      [18,'F1',0.5],[18.5,'F2',0.5],[19,'F1',0.5],[19.5,'C2',0.5],
+      [20,'F1',0.5],[20.5,'F2',0.5],[21,'F1',0.5],[21.5,'F2',0.5],
+      [22,'F1',0.5],[22.5,'F2',0.5],[23,'F1',0.5],[23.5,'A1',0.5],
+      // Bars 7-8 — E + climbing turnaround
+      [24,'E1',0.5],[24.5,'E2',0.5],[25,'E1',0.5],[25.5,'E2',0.5],
+      [26,'E1',0.5],[26.5,'E2',0.5],[27,'E1',0.5],[27.5,'B1',0.5],
+      [28,'E1',0.5],[28.5,'G1',0.5],[29,'A1',0.5],[29.5,'B1',0.5],
+      [30,'C2',0.5],[30.5,'E2',0.5],[31,'G2',0.5],[31.5,'A2',0.5],
     ]},
-    // brighter square lead — short riffs on bars 2/4/6/8 only
-    { type: 'square', vol: 0.13, notes: [
-      [4, 'A4', 0.5], [4.5, 'C5', 0.5], [5, 'E5', 1], [6, 'D5', 0.5], [6.5, 'C5', 0.5], [7, 'A4', 1],
-      [12,'A4', 0.5], [12.5,'C5', 0.5], [13,'E5', 1], [14,'D5', 0.5], [14.5,'B4', 0.5], [15,'G4', 1],
-      [20,'A4', 0.5], [20.5,'C5', 0.5], [21,'F5', 1], [22,'E5', 0.5], [22.5,'C5', 0.5], [23,'A4', 1],
-      [28,'A4', 1],   [29,'B4', 1],     [30,'C5', 2],
+    // Square lead — minor riff that follows the chord changes
+    { kind: 'tone', type: 'square', vol: 0.17, notes: [
+      // bar 3
+      [8, 'A4', 1], [9, 'C5', 1], [10, 'E5', 2],
+      // bar 4
+      [12, 'D5', 1], [13, 'C5', 1], [14, 'B4', 1], [15, 'A4', 1],
+      // bar 5
+      [16, 'E5', 1], [17, 'G5', 1], [18, 'F5', 2],
+      // bar 6
+      [20, 'D5', 1], [21, 'C5', 1], [22, 'B4', 2],
+      // bar 7 — start climb
+      [24, 'A4', 0.5], [24.5, 'C5', 0.5], [25, 'E5', 0.5], [25.5, 'G5', 0.5],
+      [26, 'A5', 2],
+      // bar 8 — resolve
+      [28, 'B4', 0.5], [28.5, 'C5', 0.5], [29, 'E5', 0.5], [29.5, 'G5', 0.5],
+      [30, 'A4', 2],
     ]},
+    // Kick drum — quarter notes on every beat for driving pulse
+    { kind: 'noise', vol: 0.35, lowpass: 220, dur: 0.10,
+      hits: Array.from({length: 32}, (_, i) => i) },
+    // Hi-hat — 8th notes for tension
+    { kind: 'noise', vol: 0.08, hipass: 5000, dur: 0.035,
+      hits: Array.from({length: 64}, (_, i) => i * 0.5) },
+    // Snare-ish crack on beats 2 + 4 of each bar (offbeat backbeat)
+    { kind: 'noise', vol: 0.18, hipass: 1200, lowpass: 6000, dur: 0.08,
+      hits: Array.from({length: 16}, (_, i) => Math.floor(i / 2) * 4 + (i % 2 === 0 ? 1 : 3)) },
   ],
 };
 
@@ -171,6 +197,34 @@ function playMusicNote(freq, startTime, duration, type, vol, dest) {
   osc.stop(startTime + duration + 0.05);
 }
 
+// Schedule a noise hit (kick / hat / snare etc) routed into the music layer.
+function playMusicNoise(startTime, duration, vol, lowpass, hipass, dest) {
+  if (!audioCtx || !dest) return;
+  const n = Math.max(2, Math.floor(audioCtx.sampleRate * duration));
+  const buffer = audioCtx.createBuffer(1, n, audioCtx.sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let i = 0; i < n; i++) data[i] = Math.random() * 2 - 1;
+  const src = audioCtx.createBufferSource();
+  src.buffer = buffer;
+  let node = src;
+  if (lowpass) {
+    const f = audioCtx.createBiquadFilter();
+    f.type = 'lowpass'; f.frequency.value = lowpass;
+    node.connect(f); node = f;
+  }
+  if (hipass) {
+    const f = audioCtx.createBiquadFilter();
+    f.type = 'highpass'; f.frequency.value = hipass;
+    node.connect(f); node = f;
+  }
+  const env = audioCtx.createGain();
+  env.gain.setValueAtTime(vol, startTime);
+  env.gain.exponentialRampToValueAtTime(0.001, startTime + duration);
+  node.connect(env); env.connect(dest);
+  src.start(startTime);
+  src.stop(startTime + duration + 0.05);
+}
+
 // Pre-schedule one full loop of a song; setTimeout queues the next loop just
 // before this one ends. Re-arming stops automatically when musicCurrentSong
 // changes (i.e., a different song was set).
@@ -183,10 +237,17 @@ function scheduleSong(song) {
   const dest = song.layer === 'menu' ? musicMenuLayer : musicCombatLayer;
   const startTime = audioCtx.currentTime + 0.08;
   for (const track of song.tracks) {
-    for (const [beatOffset, name, durBeats] of track.notes) {
-      const f = NOTE_FREQ[name];
-      if (!f) continue;
-      playMusicNote(f, startTime + beatOffset * beat, durBeats * beat, track.type, track.vol, dest);
+    if (track.kind === 'noise') {
+      // percussion track — hits is a list of beat offsets
+      for (const beatOffset of track.hits) {
+        playMusicNoise(startTime + beatOffset * beat, track.dur, track.vol, track.lowpass || 0, track.hipass || 0, dest);
+      }
+    } else {
+      for (const [beatOffset, name, durBeats] of track.notes) {
+        const f = NOTE_FREQ[name];
+        if (!f) continue;
+        playMusicNote(f, startTime + beatOffset * beat, durBeats * beat, track.type, track.vol, dest);
+      }
     }
   }
   musicLoopTimer = setTimeout(() => {
