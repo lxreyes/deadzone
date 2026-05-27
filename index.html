@@ -703,6 +703,81 @@ let gameState = 'menu';
 let trainingMode = false;
 let hasGame = false; // set true after first Play/Training; controls Resume visibility
 let menuButtons = [];     // populated by the active menu draw fn each frame
+let settingsView = 'main'; // 'main' or 'sprites'
+
+// ---------- Sprite editor (user-drawn pixel art replacing procedural visuals) ----------
+const SPRITE_SIZE = 16;
+const SPRITE_PALETTE = [
+  null,        // 0 = transparent (eraser)
+  '#ffffff',
+  '#1a1a1a',
+  '#d63030',
+  '#ff9d3a',
+  '#ffe066',
+  '#5cb85c',
+  '#7ec8ff',
+  '#c47eff',
+  '#9aa0ab',
+];
+const SPRITE_TARGETS = [
+  { id: 'player',       label: 'Player' },
+  { id: 'zombieNormal', label: 'Normal' },
+  { id: 'zombieFast',   label: 'Fast' },
+  { id: 'zombieTank',   label: 'Tank' },
+  { id: 'zombieBoss',   label: 'Boss' },
+];
+let customSprites = {}; // id → Uint8Array(256), one palette index per pixel
+let spriteEditorTarget = 'player';
+let spriteEditorColor = 1; // index into SPRITE_PALETTE
+let spriteEditorPaint = null; // truthy while click-painting; carries the color
+let spriteEditorRects = null; // populated each draw frame
+
+function ensureSprite(id) {
+  if (!customSprites[id]) customSprites[id] = new Uint8Array(SPRITE_SIZE * SPRITE_SIZE);
+  return customSprites[id];
+}
+function hasCustomSprite(id) {
+  const s = customSprites[id];
+  if (!s) return false;
+  for (let i = 0; i < s.length; i++) if (s[i] !== 0) return true;
+  return false;
+}
+function saveSprites() {
+  try {
+    const data = {};
+    for (const k in customSprites) {
+      if (customSprites[k]) data[k] = Array.from(customSprites[k]);
+    }
+    localStorage.setItem('deadzone-sprites', JSON.stringify(data));
+  } catch (e) { /* localStorage may be disabled in some contexts */ }
+}
+function loadSprites() {
+  try {
+    const stored = localStorage.getItem('deadzone-sprites');
+    if (!stored) return;
+    const data = JSON.parse(stored);
+    for (const k in data) {
+      if (Array.isArray(data[k])) customSprites[k] = new Uint8Array(data[k]);
+    }
+  } catch (e) { /* ignore */ }
+}
+// Render a custom sprite centered at (cx, cy). `targetSize` is the visual
+// diameter we want to fill (matches z.r*2 or player.r*2 in the existing code).
+function drawCustomSprite(id, cx, cy, targetSize) {
+  const sprite = customSprites[id];
+  if (!sprite) return;
+  const scale = Math.max(1, targetSize / SPRITE_SIZE);
+  const half = (SPRITE_SIZE * scale) / 2;
+  for (let y = 0; y < SPRITE_SIZE; y++) {
+    for (let x = 0; x < SPRITE_SIZE; x++) {
+      const v = sprite[y * SPRITE_SIZE + x];
+      if (!v) continue;
+      ctx.fillStyle = SPRITE_PALETTE[v];
+      ctx.fillRect(cx - half + x * scale, cy - half + y * scale, scale + 0.5, scale + 0.5);
+    }
+  }
+}
+loadSprites();
 
 // ---------- Cheats panel ----------
 // Hidden until the player types the unlock code (CHEAT_CODE) outside the shop.
@@ -1455,6 +1530,18 @@ c.addEventListener('mousemove', e => {
   if (sliderDrag && sliderDrag.slider.rect) {
     sliderDrag.slider.set(sliderValueAt(sliderDrag.slider, mouse.x));
   }
+  // painting in the sprite editor
+  if (spriteEditorPaint && spriteEditorRects && spriteEditorRects.grid) {
+    const g = spriteEditorRects.grid;
+    if (pointInRect(mouse, g)) {
+      const cx = Math.floor((mouse.x - g.x) / g.cell);
+      const cy = Math.floor((mouse.y - g.y) / g.cell);
+      if (cx >= 0 && cx < SPRITE_SIZE && cy >= 0 && cy < SPRITE_SIZE) {
+        const sprite = ensureSprite(spriteEditorTarget);
+        sprite[cy * SPRITE_SIZE + cx] = spriteEditorPaint.color;
+      }
+    }
+  }
 });
 c.addEventListener('mousedown', e => {
   ensureAudio(); resumeAudio();
@@ -1558,6 +1645,11 @@ addEventListener('mouseup', e => {
     cheatsDrag = null;
   }
   sliderDrag = null;
+  // commit sprite edits to localStorage when the player releases the brush
+  if (spriteEditorPaint) {
+    spriteEditorPaint = null;
+    saveSprites();
+  }
 });
 addEventListener('contextmenu', e => e.preventDefault());
 
@@ -3378,32 +3470,45 @@ function render() {
       ctx.fillRect(z.x - 8, z.y + z.r + 10, 16, 3);
       continue;
     }
+    // Map zombie type → sprite slot for the custom sprite system
+    const spriteId = z.isBoss ? 'zombieBoss'
+      : z.type === 'fast' ? 'zombieFast'
+      : z.type === 'tank' ? 'zombieTank'
+      : 'zombieNormal';
     if (z.isBoss) {
-      // pulsing aura
+      // pulsing aura is drawn regardless so the boss still feels boss-y
       const pulse = 1 + Math.sin(gameTime * 4) * 0.08;
       const grad = ctx.createRadialGradient(z.x, z.y, z.r * 0.6, z.x, z.y, z.r * 2.2 * pulse);
       grad.addColorStop(0, 'rgba(255, 60, 60, 0.35)');
       grad.addColorStop(1, 'rgba(255, 60, 60, 0)');
       ctx.fillStyle = grad;
       ctx.beginPath(); ctx.arc(z.x, z.y, z.r * 2.2 * pulse, 0, Math.PI*2); ctx.fill();
-      // body
-      ctx.fillStyle = z.color;
-      ctx.beginPath(); ctx.arc(z.x, z.y, z.r, 0, Math.PI*2); ctx.fill();
-      // dark core
-      ctx.fillStyle = '#3a0f0f';
-      ctx.beginPath(); ctx.arc(z.x, z.y, z.r * 0.55, 0, Math.PI*2); ctx.fill();
-      // glowing eyes
-      ctx.fillStyle = '#ff5050';
-      const eo = z.r * 0.35;
-      ctx.beginPath(); ctx.arc(z.x - eo, z.y - eo*0.3, 4, 0, Math.PI*2); ctx.fill();
-      ctx.beginPath(); ctx.arc(z.x + eo, z.y - eo*0.3, 4, 0, Math.PI*2); ctx.fill();
+      if (hasCustomSprite(spriteId)) {
+        drawCustomSprite(spriteId, z.x, z.y, z.r * 2.2);
+      } else {
+        // body
+        ctx.fillStyle = z.color;
+        ctx.beginPath(); ctx.arc(z.x, z.y, z.r, 0, Math.PI*2); ctx.fill();
+        // dark core
+        ctx.fillStyle = '#3a0f0f';
+        ctx.beginPath(); ctx.arc(z.x, z.y, z.r * 0.55, 0, Math.PI*2); ctx.fill();
+        // glowing eyes
+        ctx.fillStyle = '#ff5050';
+        const eo = z.r * 0.35;
+        ctx.beginPath(); ctx.arc(z.x - eo, z.y - eo*0.3, 4, 0, Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.arc(z.x + eo, z.y - eo*0.3, 4, 0, Math.PI*2); ctx.fill();
+      }
     } else {
-      ctx.fillStyle = z.color;
-      ctx.beginPath(); ctx.arc(z.x, z.y, z.r, 0, Math.PI*2); ctx.fill();
-      ctx.fillStyle = '#1a1a1a';
-      const eo = z.r * 0.3;
-      ctx.beginPath(); ctx.arc(z.x - eo, z.y - eo*0.3, 1.5, 0, Math.PI*2); ctx.fill();
-      ctx.beginPath(); ctx.arc(z.x + eo, z.y - eo*0.3, 1.5, 0, Math.PI*2); ctx.fill();
+      if (hasCustomSprite(spriteId)) {
+        drawCustomSprite(spriteId, z.x, z.y, z.r * 2.4);
+      } else {
+        ctx.fillStyle = z.color;
+        ctx.beginPath(); ctx.arc(z.x, z.y, z.r, 0, Math.PI*2); ctx.fill();
+        ctx.fillStyle = '#1a1a1a';
+        const eo = z.r * 0.3;
+        ctx.beginPath(); ctx.arc(z.x - eo, z.y - eo*0.3, 1.5, 0, Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.arc(z.x + eo, z.y - eo*0.3, 1.5, 0, Math.PI*2); ctx.fill();
+      }
       if (z.hp < z.hpMax) {
         const bw = z.r * 2;
         ctx.fillStyle = '#222';
@@ -3733,22 +3838,27 @@ function render() {
       ctx.beginPath(); ctx.arc(player.x, player.y, player.r + 6, 0, Math.PI*2); ctx.stroke();
     }
 
-    // body
-    ctx.fillStyle = '#ebebef';
-    ctx.beginPath(); ctx.arc(player.x, player.y, player.r, 0, Math.PI*2); ctx.fill();
-    ctx.strokeStyle = '#2c2c34';
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
+    if (hasCustomSprite('player')) {
+      // user's pixel art replaces the procedural body; gun still draws on top
+      drawCustomSprite('player', player.x, player.y, player.r * 2.4);
+    } else {
+      // body
+      ctx.fillStyle = '#ebebef';
+      ctx.beginPath(); ctx.arc(player.x, player.y, player.r, 0, Math.PI*2); ctx.fill();
+      ctx.strokeStyle = '#2c2c34';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
 
-    // eyes facing mouse
-    const eyeOff = player.r * 0.36;
-    const eyeFwd = player.r * 0.4;
-    const ex = player.x + cosA * eyeFwd;
-    const ey = player.y + sinA * eyeFwd;
-    const epx = -sinA * eyeOff, epy = cosA * eyeOff;
-    ctx.fillStyle = '#1a1a1a';
-    ctx.beginPath(); ctx.arc(ex + epx, ey + epy, 1.8, 0, Math.PI*2); ctx.fill();
-    ctx.beginPath(); ctx.arc(ex - epx, ey - epy, 1.8, 0, Math.PI*2); ctx.fill();
+      // eyes facing mouse
+      const eyeOff = player.r * 0.36;
+      const eyeFwd = player.r * 0.4;
+      const ex = player.x + cosA * eyeFwd;
+      const ey = player.y + sinA * eyeFwd;
+      const epx = -sinA * eyeOff, epy = cosA * eyeOff;
+      ctx.fillStyle = '#1a1a1a';
+      ctx.beginPath(); ctx.arc(ex + epx, ey + epy, 1.8, 0, Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.arc(ex - epx, ey - epy, 1.8, 0, Math.PI*2); ctx.fill();
+    }
 
     // gun held out front — model varies per weapon
     ctx.save();
@@ -4057,6 +4167,7 @@ const settingsSliders = [
 ];
 
 function drawSettingsMenu() {
+  if (settingsView === 'sprites') { drawSpriteEditor(); return; }
   ctx.fillStyle = 'rgba(6, 8, 12, 0.82)';
   ctx.fillRect(0, 0, W, H);
   ctx.fillStyle = '#fff';
@@ -4065,7 +4176,7 @@ function drawSettingsMenu() {
   ctx.fillText('Settings', W / 2, 110);
   ctx.fillStyle = '#9aa0ab';
   ctx.font = '13px system-ui';
-  ctx.fillText('audio · sprite editor coming next', W / 2, 134);
+  ctx.fillText('audio + sprite editor', W / 2, 134);
 
   const bw = 360, bh = 52, gap = 14;
   let by = 180;
@@ -4123,11 +4234,153 @@ function drawSettingsMenu() {
   for (const s of settingsSliders) {
     if (s.rect) s.rect.trackY = s.rect.y + s.rect.h / 2;
   }
+  by += 8;
+
+  // Sprite Editor entry
+  const spriteRect = { x: (W - bw) / 2, y: by, w: bw, h: bh, id: 'sprites' };
+  drawMenuButton(spriteRect, 'Sprite Editor', 'draw your own player + zombies', '#c47eff');
+  menuButtons.push(spriteRect);
 
   // Back
   const backRect = { x: (W - bw) / 2, y: H - 90, w: bw, h: bh, id: 'back' };
   drawMenuButton(backRect, 'Back', null, '#7ec8ff');
   menuButtons.push(backRect);
+  ctx.textAlign = 'left';
+}
+
+function drawSpriteEditor() {
+  ctx.fillStyle = 'rgba(6, 8, 12, 0.92)';
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 32px system-ui';
+  ctx.textAlign = 'center';
+  ctx.fillText('Sprite Editor', W / 2, 50);
+  ctx.fillStyle = '#9aa0ab';
+  ctx.font = '12px system-ui';
+  ctx.fillText('pick a target, pick a color, drag to paint', W / 2, 70);
+
+  menuButtons = [];
+  spriteEditorRects = { tabs: [], palette: [], grid: null, clear: null, back: null };
+
+  // Target tabs across the top
+  const tabW = 120, tabH = 30, tabGap = 8;
+  const tabsTotalW = SPRITE_TARGETS.length * tabW + (SPRITE_TARGETS.length - 1) * tabGap;
+  let tx = (W - tabsTotalW) / 2;
+  for (const t of SPRITE_TARGETS) {
+    const rect = { x: tx, y: 88, w: tabW, h: tabH, id: t.id };
+    const active = spriteEditorTarget === t.id;
+    const hover = pointInRect(mouse, rect);
+    ctx.fillStyle = active ? '#1a3a5a' : (hover ? '#1c2030' : '#13151c');
+    ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+    ctx.strokeStyle = active ? '#7ec8ff' : '#33363f';
+    ctx.lineWidth = active ? 2 : 1;
+    ctx.strokeRect(rect.x, rect.y, rect.w, rect.h);
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 12px system-ui';
+    ctx.textAlign = 'center';
+    ctx.fillText(t.label, rect.x + rect.w / 2, rect.y + 19);
+    spriteEditorRects.tabs.push(rect);
+    tx += tabW + tabGap;
+  }
+
+  // Grid — centered horizontally, 480x480
+  const gridSize = 480;
+  const cell = gridSize / SPRITE_SIZE; // 30px per cell
+  const gx = (W - gridSize) / 2 - 60; // shift left to make room for palette
+  const gy = 136;
+  spriteEditorRects.grid = { x: gx, y: gy, w: gridSize, h: gridSize, cell };
+
+  // checkerboard background to show transparency
+  for (let yy = 0; yy < SPRITE_SIZE; yy++) {
+    for (let xx = 0; xx < SPRITE_SIZE; xx++) {
+      ctx.fillStyle = ((xx + yy) % 2 === 0) ? '#1a1d24' : '#22252e';
+      ctx.fillRect(gx + xx * cell, gy + yy * cell, cell, cell);
+    }
+  }
+  // pixels
+  const sprite = ensureSprite(spriteEditorTarget);
+  for (let yy = 0; yy < SPRITE_SIZE; yy++) {
+    for (let xx = 0; xx < SPRITE_SIZE; xx++) {
+      const v = sprite[yy * SPRITE_SIZE + xx];
+      if (!v) continue;
+      ctx.fillStyle = SPRITE_PALETTE[v];
+      ctx.fillRect(gx + xx * cell, gy + yy * cell, cell, cell);
+    }
+  }
+  // grid lines
+  ctx.strokeStyle = 'rgba(0,0,0,0.35)';
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= SPRITE_SIZE; i++) {
+    ctx.beginPath(); ctx.moveTo(gx + i * cell + 0.5, gy); ctx.lineTo(gx + i * cell + 0.5, gy + gridSize); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(gx, gy + i * cell + 0.5); ctx.lineTo(gx + gridSize, gy + i * cell + 0.5); ctx.stroke();
+  }
+  // outer border
+  ctx.strokeStyle = '#5a87c4';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(gx - 1, gy - 1, gridSize + 2, gridSize + 2);
+  // hover cell highlight
+  if (pointInRect(mouse, spriteEditorRects.grid)) {
+    const hx = Math.floor((mouse.x - gx) / cell);
+    const hy = Math.floor((mouse.y - gy) / cell);
+    if (hx >= 0 && hx < SPRITE_SIZE && hy >= 0 && hy < SPRITE_SIZE) {
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(gx + hx * cell + 1, gy + hy * cell + 1, cell - 2, cell - 2);
+    }
+  }
+
+  // Palette on the right
+  const palX = gx + gridSize + 28;
+  const palY = gy;
+  const swatch = 40, swGap = 6;
+  for (let i = 0; i < SPRITE_PALETTE.length; i++) {
+    const sx = palX, sy = palY + i * (swatch + swGap);
+    const rect = { x: sx, y: sy, w: swatch, h: swatch, index: i };
+    const isErase = i === 0;
+    const active = spriteEditorColor === i;
+    // checkerboard for transparent slot
+    if (isErase) {
+      ctx.fillStyle = '#1a1d24';
+      ctx.fillRect(sx, sy, swatch, swatch);
+      ctx.fillStyle = '#33363f';
+      for (let yy = 0; yy < 4; yy++) for (let xx = 0; xx < 4; xx++) {
+        if ((xx + yy) % 2 === 0) ctx.fillRect(sx + xx * 10, sy + yy * 10, 10, 10);
+      }
+    } else {
+      ctx.fillStyle = SPRITE_PALETTE[i];
+      ctx.fillRect(sx, sy, swatch, swatch);
+    }
+    ctx.strokeStyle = active ? '#fff' : '#1a1a1a';
+    ctx.lineWidth = active ? 3 : 1;
+    ctx.strokeRect(sx, sy, swatch, swatch);
+    if (isErase) {
+      ctx.fillStyle = '#dfe2e8';
+      ctx.font = 'bold 10px system-ui';
+      ctx.textAlign = 'center';
+      ctx.fillText('erase', sx + swatch / 2, sy + swatch / 2 + 3);
+    }
+    spriteEditorRects.palette.push(rect);
+  }
+
+  // Tools below the grid
+  const tY = gy + gridSize + 18;
+  const clearRect = { x: gx + 10, y: tY, w: 120, h: 36, id: 'spriteClear' };
+  ctx.fillStyle = pointInRect(mouse, clearRect) ? '#3a3030' : '#221a1a';
+  ctx.fillRect(clearRect.x, clearRect.y, clearRect.w, clearRect.h);
+  ctx.strokeStyle = '#d36'; ctx.lineWidth = 2;
+  ctx.strokeRect(clearRect.x, clearRect.y, clearRect.w, clearRect.h);
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 13px system-ui';
+  ctx.textAlign = 'center';
+  ctx.fillText('Clear', clearRect.x + clearRect.w / 2, clearRect.y + 23);
+  menuButtons.push(clearRect);
+
+  // Back to Settings
+  const backRect = { x: gx + gridSize - 130, y: tY, w: 130, h: 36, id: 'spriteBack' };
+  drawMenuButton(backRect, 'Done', null, '#7ec8ff');
+  menuButtons.push(backRect);
+
   ctx.textAlign = 'left';
 }
 
@@ -4146,6 +4399,29 @@ function drawTrainingBanner() {
 
 // Menu button click dispatch — called from mousedown when a menu is active.
 function handleMenuClick() {
+  // Sprite editor — check tabs, palette, grid before regular buttons
+  if (gameState === 'settings' && settingsView === 'sprites' && spriteEditorRects) {
+    // tabs
+    for (const r of spriteEditorRects.tabs) {
+      if (pointInRect(mouse, r)) { spriteEditorTarget = r.id; SFX.uiClick(); return true; }
+    }
+    // palette
+    for (const r of spriteEditorRects.palette) {
+      if (pointInRect(mouse, r)) { spriteEditorColor = r.index; SFX.uiClick(); return true; }
+    }
+    // grid — start painting drag
+    const grid = spriteEditorRects.grid;
+    if (grid && pointInRect(mouse, grid)) {
+      const cx = Math.floor((mouse.x - grid.x) / grid.cell);
+      const cy = Math.floor((mouse.y - grid.y) / grid.cell);
+      if (cx >= 0 && cx < SPRITE_SIZE && cy >= 0 && cy < SPRITE_SIZE) {
+        const sprite = ensureSprite(spriteEditorTarget);
+        sprite[cy * SPRITE_SIZE + cx] = spriteEditorColor;
+        spriteEditorPaint = { color: spriteEditorColor };
+      }
+      return true;
+    }
+  }
   for (const r of menuButtons) {
     if (!pointInRect(mouse, r)) continue;
     SFX.uiClick();
@@ -4182,12 +4458,29 @@ function handleMenuAction(id) {
       gameState = 'menu';
       break;
     case 'back':
+      if (gameState === 'settings' && settingsView === 'sprites') {
+        settingsView = 'main';
+        break;
+      }
       gameState = hasGame ? 'paused' : 'menu';
       break;
     case 'mute':
       soundMuted = !soundMuted;
       applyMusicMute();
+      applySfxVolume();
       break;
+    case 'sprites':
+      settingsView = 'sprites';
+      break;
+    case 'spriteBack':
+      settingsView = 'main';
+      break;
+    case 'spriteClear': {
+      const s = ensureSprite(spriteEditorTarget);
+      s.fill(0);
+      saveSprites();
+      break;
+    }
   }
   updateMusicForState();
 }
