@@ -707,6 +707,13 @@ const summons = [];   // friendly summoned units — { kind, x, y, vx, vy, hp, l
 const healFields = [];// dropped healing pads — { x, y, r, life, max, hps }
 const pets = [];      // permanent immortal pet companions — { id, x, y, vx, vy, lastAttack, target }
 const ownedPets = new Set(); // tracks which pet types are already owned (buy-once)
+const zombieBullets = []; // projectiles fired by zombies (spitter) — { x, y, vx, vy, r, dmg, life, color }
+const healPulses = [];  // expanding green rings drawn when a healer pulses — { x, y, r, max, life, maxLife }
+// One random "arena event" per wave — fires at a random time mid-wave.
+// `pending` is the scheduled type; once fired it moves into `active` (so its
+// visual side-effect can persist for a few seconds).
+let pendingEvent = null;     // { type, fireIn }
+let activeEvent = null;      // { type, timer, ... }
 const decals  = []; // blood splats on the floor
 
 // Building catalog. Buildings snap to the 40px floor grid; w/h govern both
@@ -1189,10 +1196,16 @@ const cheatSections = [
       } },
   ]},
   { id: 'spawn', name: 'Spawn Enemies', open: false, items: [
-    { label: '+Normal', run() { spawnSpecific('normal'); } },
-    { label: '+Fast',   run() { spawnSpecific('fast'); } },
-    { label: '+Tank',   run() { spawnSpecific('tank'); } },
-    { label: '+Dummy',  run() { spawnTrainerDummy(); } },
+    { label: '+Normal',   run() { spawnSpecific('normal'); } },
+    { label: '+Fast',     run() { spawnSpecific('fast'); } },
+    { label: '+Tank',     run() { spawnSpecific('tank'); } },
+    { label: '+Exploder', run() { spawnSpecific('exploder'); } },
+    { label: '+Spitter',  run() { spawnSpecific('spitter'); } },
+    { label: '+Healer',   run() { spawnSpecific('healer'); } },
+    { label: '+Shielded', run() { spawnSpecific('shielded'); } },
+    { label: '+Spawner',  run() { spawnSpecific('spawner'); } },
+    { label: '+MiniBoss', run() { spawnMiniBoss(); } },
+    { label: '+Dummy',    run() { spawnTrainerDummy(); } },
   ]},
   { id: 'loadout', name: 'Loadout', open: false, items: [
     { label: '+Pickup', run() {
@@ -2523,6 +2536,26 @@ function killZombie(z) {
     }
     return;
   }
+  // Exploders detonate on death — small AoE damage to player + other zombies.
+  // Done before splicing in the caller's loop so we don't recurse infinitely.
+  if (z.type === 'exploder' && !z._exploded) {
+    z._exploded = true;
+    const def = ZOMBIE_TYPES.exploder;
+    explode(z.x, z.y, def.explodeR, def.explodeDmg * (1 + wave * 0.04));
+    // also hurt the player if in range
+    const pdx = player.x - z.x, pdy = player.y - z.y;
+    if (pdx*pdx + pdy*pdy < def.explodeR * def.explodeR && player.invuln <= 0 && !godMode) {
+      if (player.buffs.shield > 0) {
+        player.buffs.shield = 0;
+        player.invuln = 0.6;
+      } else {
+        const dmgMul = 1 - (player.special.ironSkin || 0);
+        const dmg = def.explodeDmg * (1 + wave * 0.04) * Math.max(0, dmgMul) * 0.6;
+        player.hp -= dmg;
+        flashRed = Math.max(flashRed, 0.4);
+      }
+    }
+  }
   kills++;
   spawnDeathParticles(z.x, z.y, z.color);
   addBlood(z.x, z.y, z.isBoss ? 2 : 1);
@@ -2653,63 +2686,83 @@ function edgeSpawnPoint() {
 }
 
 // Pick a zombie type given the current wave. Tougher mixes show up later.
+// ---------- Zombie type catalog ----------
+// Each entry holds the base stats + behavior knobs for one zombie type.
+// `gate` is the lowest wave the type can appear from (rollType respects it).
+// `weight(w)` returns the relative spawn chance at wave w (capped internally).
+const ZOMBIE_TYPES = {
+  normal:   { hp: 22, speed: 62,  damage: 14, r: 12, color: '#5e8c4a', money: 3,  exp: 1, gate: 0 },
+  fast:     { hp: 14, speed: 120, damage: 10, r: 9,  color: '#a85040', money: 5,  exp: 2, gate: 2 },
+  tank:     { hp: 75, speed: 38,  damage: 26, r: 19, color: '#374827', money: 14, exp: 4, gate: 4 },
+  // Detonates on death — AoE damage + visual boom. Slow + chunky.
+  exploder: { hp: 30, speed: 50,  damage: 18, r: 13, color: '#ff6030', money: 7,  exp: 3, gate: 3,
+              explodeR: 95, explodeDmg: 45 },
+  // Periodically pulses, healing nearby zombies. Stays back, supports.
+  healer:   { hp: 38, speed: 45,  damage: 8,  r: 13, color: '#7af0a8', money: 9,  exp: 3, gate: 5,
+              healCd: 3.5, healR: 110, healAmt: 12 },
+  // Keeps distance from the player and lobs slow projectiles.
+  spitter:  { hp: 28, speed: 60,  damage: 12, r: 11, color: '#a070d0', money: 8,  exp: 3, gate: 4,
+              shotCd: 2.4, shotSpeed: 280, shotDmg: 12, shotR: 6, preferRange: 220 },
+  // Carries a directional shield — front hits are heavily reduced.
+  shielded: { hp: 55, speed: 42,  damage: 22, r: 17, color: '#7090b0', money: 13, exp: 4, gate: 6,
+              shieldDot: 0.4, shieldMul: 0.30 },
+  // Periodically births small fast minions while alive.
+  spawner:  { hp: 70, speed: 28,  damage: 16, r: 18, color: '#604030', money: 16, exp: 5, gate: 8,
+              minionCd: 5.0, minionHp: 10, minionSpeed: 130, minionDmg: 8, minionR: 8 },
+};
+
 function rollType() {
   const r = Math.random();
-  const tankChance = Math.min(0.28, 0.02 + wave * 0.014);
-  const fastChance = Math.min(0.42, 0.06 + wave * 0.020);
-  if (wave >= 4 && r < tankChance)               return 'tank';
-  if (wave >= 2 && r < tankChance + fastChance)  return 'fast';
+  // Cumulative-window roll, ordered rarest → most common; first hit wins.
+  // Each weight is capped so a single type never crowds out the others.
+  let c = 0;
+  c += wave >= ZOMBIE_TYPES.spawner.gate  ? Math.min(0.05, (wave - 8)  * 0.005) : 0; if (r < c) return 'spawner';
+  c += wave >= ZOMBIE_TYPES.shielded.gate ? Math.min(0.08, (wave - 6)  * 0.008) : 0; if (r < c) return 'shielded';
+  c += wave >= ZOMBIE_TYPES.healer.gate   ? Math.min(0.06, (wave - 5)  * 0.006) : 0; if (r < c) return 'healer';
+  c += wave >= ZOMBIE_TYPES.spitter.gate  ? Math.min(0.08, (wave - 4)  * 0.009) : 0; if (r < c) return 'spitter';
+  c += wave >= ZOMBIE_TYPES.exploder.gate ? Math.min(0.10, (wave - 3)  * 0.011) : 0; if (r < c) return 'exploder';
+  c += wave >= ZOMBIE_TYPES.tank.gate     ? Math.min(0.20, 0.02 + wave * 0.011)  : 0; if (r < c) return 'tank';
+  c += wave >= ZOMBIE_TYPES.fast.gate     ? Math.min(0.32, 0.05 + wave * 0.018)  : 0; if (r < c) return 'fast';
   return 'normal';
 }
 
-function spawnZombie(pos) {
-  if (zombies.length >= 100) return;
-  const { x, y } = pos || edgeSpawnPoint();
-  const type = rollType();
-  const base = {
-    normal: { hp: 22, speed: 62,  damage: 14, r: 12, color: '#5e8c4a', money: 3 },
-    fast:   { hp: 14, speed: 120, damage: 10, r: 9,  color: '#a85040', money: 5 },
-    tank:   { hp: 75, speed: 38,  damage: 26, r: 19, color: '#374827', money: 14 },
-  }[type];
-  // wave scaling
-  const hpMul   = 1 + wave * 0.09;
-  const dmgMul  = 1 + wave * 0.025;
+// Build a zombie object from a type id, applying wave scaling. Shared by
+// spawnZombie() (random) and spawnSpecific() (cheats / events).
+function makeZombieOfType(type, x, y) {
+  const def = ZOMBIE_TYPES[type] || ZOMBIE_TYPES.normal;
+  const hpMul = 1 + wave * 0.09;
+  const dmgMul = 1 + wave * 0.025;
   const moneyMul = 1 + wave * 0.04;
-  const hp = Math.ceil(base.hp * hpMul);
-  zombies.push({
+  const hp = Math.ceil(def.hp * hpMul);
+  const z = {
     x, y, type,
-    r: base.r, color: base.color, speed: base.speed,
+    r: def.r, color: def.color, speed: def.speed,
     hp, hpMax: hp,
-    damage: base.damage * dmgMul,
-    money: Math.ceil(base.money * moneyMul),
-    expReward: type === 'tank' ? 4 : (type === 'fast' ? 2 : 1),
+    damage: def.damage * dmgMul,
+    money: Math.ceil(def.money * moneyMul),
+    expReward: def.exp,
     phase: Math.random() * Math.PI * 2,
-  });
+  };
+  // Per-type runtime fields
+  if (type === 'healer')   z.healTimer   = def.healCd * (0.5 + Math.random() * 0.5);
+  if (type === 'spitter')  z.shotTimer   = def.shotCd * (0.4 + Math.random() * 0.5);
+  if (type === 'spawner')  z.minionTimer = def.minionCd * (0.4 + Math.random() * 0.6);
+  if (type === 'exploder') z.fuse        = Math.random() * Math.PI * 2; // visual pulse phase
+  return z;
 }
 
-// Cheat helper: spawn a specific zombie type at an arena edge.
+function spawnZombie(pos) {
+  if (zombies.length >= 120) return;
+  const { x, y } = pos || edgeSpawnPoint();
+  zombies.push(makeZombieOfType(rollType(), x, y));
+}
+
+// Cheat / event helper: spawn a specific zombie type at an arena edge.
 function spawnSpecific(type) {
-  if (zombies.length >= 100) return;
+  if (zombies.length >= 120) return;
+  if (!ZOMBIE_TYPES[type]) return;
   const { x, y } = edgeSpawnPoint();
-  const base = {
-    normal: { hp: 22, speed: 62,  damage: 14, r: 12, color: '#5e8c4a', money: 3 },
-    fast:   { hp: 14, speed: 120, damage: 10, r: 9,  color: '#a85040', money: 5 },
-    tank:   { hp: 75, speed: 38,  damage: 26, r: 19, color: '#374827', money: 14 },
-  }[type];
-  if (!base) return;
-  const hpMul   = 1 + wave * 0.09;
-  const dmgMul  = 1 + wave * 0.025;
-  const moneyMul = 1 + wave * 0.04;
-  const hp = Math.ceil(base.hp * hpMul);
-  zombies.push({
-    x, y, type,
-    r: base.r, color: base.color, speed: base.speed,
-    hp, hpMax: hp,
-    damage: base.damage * dmgMul,
-    money: Math.ceil(base.money * moneyMul),
-    expReward: type === 'tank' ? 4 : (type === 'fast' ? 2 : 1),
-    phase: Math.random() * Math.PI * 2,
-  });
+  zombies.push(makeZombieOfType(type, x, y));
 }
 
 // Trainer dummy — stationary punching bag at the center of the arena. Massive
@@ -2811,6 +2864,101 @@ function spawnBossMinions(boss, n) {
   }
 }
 
+// Spawn a mini-boss — used by waves divisible by 5 (excluding real boss waves).
+// Hardier than a tank but well below boss tier; rewards a chunky money/exp pile.
+function spawnMiniBoss() {
+  const { x, y } = edgeSpawnPoint();
+  const hpMul = 1 + wave * 0.10;
+  const dmgMul = 1 + wave * 0.03;
+  const hp = Math.ceil(280 * hpMul);
+  zombies.push({
+    x, y, type: 'miniBoss', isMiniBoss: true,
+    r: 24, color: '#3a4858',
+    speed: 50,
+    hp, hpMax: hp,
+    damage: 30 * dmgMul,
+    money: 60 + wave * 4,
+    expReward: 12 + Math.floor(wave * 0.5),
+    phase: Math.random() * Math.PI * 2,
+  });
+  floaters.push({ x: W / 2, y: 70, text: 'MINI-BOSS APPROACHING', life: 2.4, color: '#ffa040' });
+  shake(8);
+  SFX.bossSpawn();
+}
+
+// ---------- Random arena events (one per wave) ----------
+// Catalog of event ids and what they do. `fire(state)` runs the one-shot
+// effect; some events also leave behind state (active = { type, timer })
+// for a few seconds so their visual lingers.
+const ARENA_EVENTS = ['supplyDrop', 'blackout', 'hordePush', 'healZone'];
+
+function scheduleArenaEvent() {
+  // 30% of waves are quiet — no event. Otherwise pick one at random and queue
+  // it to fire a few seconds in.
+  if (trainingMode) return;
+  if (Math.random() < 0.30) { pendingEvent = null; return; }
+  const type = ARENA_EVENTS[Math.floor(Math.random() * ARENA_EVENTS.length)];
+  pendingEvent = { type, fireIn: 3 + Math.random() * 6 };
+}
+
+function fireArenaEvent(type) {
+  if (type === 'supplyDrop') {
+    // Drop a money crate AND a pickup in the same spot, partyhat-style.
+    let x, y, ok = false;
+    for (let attempt = 0; attempt < 30 && !ok; attempt++) {
+      x = 80 + Math.random() * (W - 160);
+      y = 80 + Math.random() * (H - 160);
+      if (x > shop.x - 20 && x < shop.x + shop.w + 20 && y > shop.y - 20 && y < shop.y + shop.h + 20) continue;
+      ok = true;
+    }
+    crates.push({ x, y, value: 60 + Math.floor(wave * 2) });
+    const ptype = PICKUP_KEYS[Math.floor(Math.random() * PICKUP_KEYS.length)];
+    spawnPickupAt(x + 24, y, ptype);
+    floaters.push({ x: W / 2, y: 96, text: 'EVENT: Supply Drop', life: 2.0, color: '#ffd166' });
+    SFX.crate();
+  } else if (type === 'blackout') {
+    activeEvent = { type, timer: 10.0 };
+    floaters.push({ x: W / 2, y: 96, text: 'EVENT: Blackout', life: 2.0, color: '#5a87c4' });
+    SFX.uiClick();
+  } else if (type === 'hordePush') {
+    // Spawn a sudden burst of 6 zombies from one edge.
+    const base = edgeSpawnPoint();
+    for (let i = 0; i < 6; i++) {
+      const ox = (Math.random() - 0.5) * 60;
+      const oy = (Math.random() - 0.5) * 60;
+      spawnZombie({ x: base.x + ox, y: base.y + oy });
+    }
+    floaters.push({ x: W / 2, y: 96, text: 'EVENT: Horde Push', life: 2.0, color: '#ff5050' });
+    shake(6);
+  } else if (type === 'healZone') {
+    // Drop a healing field somewhere safe so the player has to go grab it.
+    let x, y, ok = false;
+    for (let attempt = 0; attempt < 30 && !ok; attempt++) {
+      x = 100 + Math.random() * (W - 200);
+      y = 100 + Math.random() * (H - 200);
+      if (x > shop.x - 20 && x < shop.x + shop.w + 20 && y > shop.y - 20 && y < shop.y + shop.h + 20) continue;
+      ok = true;
+    }
+    healFields.push({ x, y, r: 60, life: 12, max: 12, hps: 14 });
+    floaters.push({ x: W / 2, y: 96, text: 'EVENT: Heal Zone', life: 2.0, color: '#5cd86b' });
+  }
+}
+
+function updateArenaEvent(dt) {
+  if (pendingEvent) {
+    pendingEvent.fireIn -= dt;
+    if (pendingEvent.fireIn <= 0) {
+      const t = pendingEvent.type;
+      pendingEvent = null;
+      fireArenaEvent(t);
+    }
+  }
+  if (activeEvent) {
+    activeEvent.timer -= dt;
+    if (activeEvent.timer <= 0) activeEvent = null;
+  }
+}
+
 function beginNextWave() {
   wave++;
   bestWave = Math.max(bestWave, wave);
@@ -2825,6 +2973,8 @@ function beginNextWave() {
     waveZombiesToSpawn = 5 + Math.floor(wave * 1.8);
     waveSpawnTimer = 0.4;
     SFX.waveStart();
+    // Mini-boss every 5th non-boss wave — alongside the normal spawn queue
+    if (wave > 0 && wave % 5 === 0) spawnMiniBoss();
   }
   // each wave gets a free money crate somewhere in the arena
   spawnMoneyCrate();
@@ -2832,6 +2982,11 @@ function beginNextWave() {
   // ...and a random pickup
   spawnRandomPickup();
   if (wave > 0 && wave % 5 === 0) spawnRandomPickup(); // bonus every 5 waves
+  // Roll a random arena event (skipped on boss waves so the boss fight is
+  // a focused duel and any in-flight event is cleared).
+  pendingEvent = null;
+  activeEvent = null;
+  if (!isBossWave) scheduleArenaEvent();
 }
 
 function endCurrentWave() {
@@ -3867,7 +4022,7 @@ function swingMelee(def, ang) {
     const { dmg, isCrit } = rollPerkedDamage(def.damage);
     // Boss Slayer perk applies to direct melee hits too
     const bossMul = z.isBoss && player.special.bossSlayer ? 1 + player.special.bossSlayer : 1;
-    const actualDmg = dmg * bossMul;
+    const actualDmg = modifyZombieDamage(z, dmg * bossMul, player.x, player.y);
     const dealt = Math.min(actualDmg, z.hp);
     z.hp -= actualDmg;
     if (player.special.lifesteal) {
@@ -4041,11 +4196,23 @@ function explode(x, y, radius, dmg) {
 }
 
 function detonateNuke(x, y) {
-  // Skip bosses — they're immune. Walk a backwards index and splice each
-  // non-boss zombie individually so the array stays consistent.
+  // Skip bosses — they're immune. Mini-bosses take a chunk of HP but can't be
+  // killed by the nuke itself; their hp is clamped to 1 so the player still
+  // has to finish them off conventionally.
   for (let i = zombies.length - 1; i >= 0; i--) {
     const z = zombies[i];
     if (z.isBoss) continue;
+    if (z.isMiniBoss) {
+      const dmg = Math.max(80, z.hpMax * 0.45);
+      z.hp = Math.max(1, z.hp - dmg);
+      // small visual punch on the mini-boss so the player sees it took a hit
+      for (let k = 0; k < 18; k++) {
+        const a = Math.random() * Math.PI * 2;
+        const s = 100 + Math.random() * 200;
+        particles.push({ x: z.x, y: z.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s, life: 0.45, color: '#ffd166' });
+      }
+      continue;
+    }
     kills++;
     spawnDeathParticles(z.x, z.y, z.color);
     addBlood(z.x, z.y, z.isBoss ? 2 : 1);
@@ -4279,6 +4446,66 @@ function updateZombies(dt) {
       }
     }
 
+    // ---- Per-type behaviors ----
+    if (z.type === 'spitter') {
+      const def = ZOMBIE_TYPES.spitter;
+      // back-off behavior — if closer than preferRange, push away from player
+      if (d < def.preferRange) {
+        const back = (def.preferRange - d) * 0.6;
+        z.x -= (dx / d) * back * dt;
+        z.y -= (dy / d) * back * dt;
+      }
+      z.shotTimer -= dt;
+      if (z.shotTimer <= 0 && d > 40) {
+        z.shotTimer = def.shotCd * (0.9 + Math.random() * 0.4);
+        const sa = Math.atan2(player.y - z.y, player.x - z.x);
+        zombieBullets.push({
+          x: z.x, y: z.y,
+          vx: Math.cos(sa) * def.shotSpeed,
+          vy: Math.sin(sa) * def.shotSpeed,
+          r: def.shotR, dmg: def.shotDmg * (1 + wave * 0.025),
+          life: 2.2, color: '#c490ff',
+        });
+      }
+    } else if (z.type === 'healer') {
+      const def = ZOMBIE_TYPES.healer;
+      z.healTimer -= dt;
+      if (z.healTimer <= 0) {
+        z.healTimer = def.healCd;
+        // Pulse: heal every other zombie within healR (capped at hpMax)
+        for (const other of zombies) {
+          if (other === z) continue;
+          if (other.isBoss) continue;
+          const hx = other.x - z.x, hy = other.y - z.y;
+          if (hx * hx + hy * hy < def.healR * def.healR) {
+            other.hp = Math.min(other.hpMax, other.hp + def.healAmt);
+          }
+        }
+        healPulses.push({ x: z.x, y: z.y, r: 0, max: def.healR, life: 0.6, maxLife: 0.6 });
+      }
+    } else if (z.type === 'spawner') {
+      const def = ZOMBIE_TYPES.spawner;
+      z.minionTimer -= dt;
+      if (z.minionTimer <= 0 && zombies.length < 100) {
+        z.minionTimer = def.minionCd * (0.85 + Math.random() * 0.3);
+        for (let k = 0; k < 2; k++) {
+          const a = Math.random() * Math.PI * 2;
+          const dist = z.r + 10;
+          const hp = Math.ceil(def.minionHp * (1 + wave * 0.07));
+          zombies.push({
+            x: z.x + Math.cos(a) * dist,
+            y: z.y + Math.sin(a) * dist,
+            type: 'spawn-minion',
+            r: def.minionR, color: '#8a6448', speed: def.minionSpeed,
+            hp, hpMax: hp,
+            damage: def.minionDmg * (1 + wave * 0.025),
+            money: 1, expReward: 1,
+            phase: Math.random() * Math.PI * 2,
+          });
+        }
+      }
+    }
+
     // contact damage to player + thorns retaliation
     // dx/dy/d above point toward whatever the zombie is chasing (player or
     // decoy). Recompute against the player specifically for damage.
@@ -4370,6 +4597,73 @@ function segmentCircleEntry(x0, y0, x1, y1, cx, cy, r) {
   if (t2 >= 0 && t2 <= 1) return t2;
   if (t1 < 0 && t2 > 1) return 0; // segment starts already inside the circle
   return null;
+}
+
+// Spitter projectiles + buildings/decoys deal damage to the player on contact.
+// Type-specific incoming-damage modifier. Currently only the Shielded zombie
+// uses this — front hits (where it's facing the player) deal reduced damage.
+// Returns the effective damage value, leaving the caller to apply it to hp.
+function modifyZombieDamage(z, dmg, hitX, hitY) {
+  if (z.type !== 'shielded') return dmg;
+  const def = ZOMBIE_TYPES.shielded;
+  const fdx = player.x - z.x, fdy = player.y - z.y;
+  const fl = Math.hypot(fdx, fdy) || 1;
+  const hdx = hitX - z.x, hdy = hitY - z.y;
+  const hl = Math.hypot(hdx, hdy) || 1;
+  const dot = (fdx * hdx + fdy * hdy) / (fl * hl);
+  // If the hit came from the same hemisphere as the player, the shield blocks.
+  if (dot > def.shieldDot) return dmg * def.shieldMul;
+  return dmg;
+}
+
+function updateZombieBullets(dt) {
+  for (let i = zombieBullets.length - 1; i >= 0; i--) {
+    const b = zombieBullets[i];
+    b.life -= dt;
+    b.x += b.vx * dt;
+    b.y += b.vy * dt;
+    // off-screen or expired
+    if (b.life <= 0 || b.x < -20 || b.x > W + 20 || b.y < -20 || b.y > H + 20) {
+      zombieBullets.splice(i, 1);
+      continue;
+    }
+    // player hit?
+    const dx = player.x - b.x, dy = player.y - b.y;
+    const rr = b.r + player.r;
+    if (dx * dx + dy * dy < rr * rr) {
+      if (player.invuln <= 0 && !godMode) {
+        if (player.buffs.shield > 0) {
+          player.buffs.shield = 0;
+          player.invuln = 0.6;
+        } else {
+          let dmgMul = 1 - (player.special.ironSkin || 0);
+          if (player.special.lastStand && player.hp / player.maxHp < 0.2) {
+            dmgMul -= player.special.lastStand;
+          }
+          const dmgTaken = b.dmg * Math.max(0, dmgMul);
+          player.hp -= dmgTaken;
+          flashRed = Math.max(flashRed, Math.min(0.4, dmgTaken * 0.05));
+          SFX.playerHurt();
+        }
+      }
+      // small splat regardless of whether the player took damage
+      for (let k = 0; k < 6; k++) {
+        const a = Math.random() * Math.PI * 2;
+        const s = 80 + Math.random() * 120;
+        particles.push({ x: b.x, y: b.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s, life: 0.4, color: b.color });
+      }
+      zombieBullets.splice(i, 1);
+    }
+  }
+}
+
+function updateHealPulses(dt) {
+  for (let i = healPulses.length - 1; i >= 0; i--) {
+    const h = healPulses[i];
+    h.life -= dt;
+    h.r = (1 - h.life / h.maxLife) * h.max;
+    if (h.life <= 0) healPulses.splice(i, 1);
+  }
 }
 
 function updateBullets(dt) {
@@ -4469,9 +4763,10 @@ function updateBullets(dt) {
           break;
         }
         // Boss Slayer perk amplifies direct damage to bosses
-        const dmgApplied = z.isBoss && player.special.bossSlayer
+        let dmgApplied = z.isBoss && player.special.bossSlayer
           ? b.damage * (1 + player.special.bossSlayer)
           : b.damage;
+        dmgApplied = modifyZombieDamage(z, dmgApplied, b.x, b.y);
         const dmgDealt = Math.min(dmgApplied, z.hp);
         z.hp -= dmgApplied;
         b.hits.add(z);
@@ -4727,6 +5022,10 @@ function checkDeath() {
   // restart the current wave from the beginning
   zombies.length = 0;
   bullets.length = 0;
+  zombieBullets.length = 0;
+  healPulses.length = 0;
+  pendingEvent = null;
+  activeEvent = null;
   if (wave > 0) {
     if (isBossWave) {
       spawnBoss();
@@ -4734,6 +5033,7 @@ function checkDeath() {
     } else {
       waveZombiesToSpawn = 5 + Math.floor(wave * 1.8);
       waveSpawnTimer = 1.0;
+      if (wave % 5 === 0) spawnMiniBoss();
     }
   }
 }
@@ -4788,6 +5088,10 @@ function hardReset() {
   storage.length = 0;
   pets.length = 0;
   ownedPets.clear();
+  zombieBullets.length = 0;
+  healPulses.length = 0;
+  pendingEvent = null;
+  activeEvent = null;
   shopTab = 'upgrades';
   shakeAmt = 0; flashRed = 0; nearbyGun = null;
   player.weapon = 'pistol';
@@ -5008,6 +5312,16 @@ function render() {
   }
 
   // zombies
+  // Healer pulse rings — drawn under zombies so they read as an aura
+  for (const h of healPulses) {
+    const a = Math.max(0, Math.min(1, h.life / h.maxLife));
+    ctx.strokeStyle = `rgba(122, 240, 168, ${0.55 * a})`;
+    ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(h.x, h.y, h.r, 0, Math.PI * 2); ctx.stroke();
+    ctx.fillStyle = `rgba(122, 240, 168, ${0.10 * a})`;
+    ctx.beginPath(); ctx.arc(h.x, h.y, h.r, 0, Math.PI * 2); ctx.fill();
+  }
+
   for (const z of zombies) {
     if (z.isDummy) {
       // wooden bullseye target on a stand — friendlier than a zombie
@@ -5032,6 +5346,34 @@ function render() {
       : z.type === 'fast' ? 'zombieFast'
       : z.type === 'tank' ? 'zombieTank'
       : 'zombieNormal';
+    if (z.isMiniBoss) {
+      // Smaller version of the boss aura
+      const pulse = 1 + Math.sin(gameTime * 5) * 0.06;
+      const grad = ctx.createRadialGradient(z.x, z.y, z.r * 0.5, z.x, z.y, z.r * 1.7 * pulse);
+      grad.addColorStop(0, 'rgba(255, 160, 64, 0.30)');
+      grad.addColorStop(1, 'rgba(255, 160, 64, 0)');
+      ctx.fillStyle = grad;
+      ctx.beginPath(); ctx.arc(z.x, z.y, z.r * 1.7 * pulse, 0, Math.PI*2); ctx.fill();
+      // Body
+      ctx.fillStyle = z.color;
+      ctx.beginPath(); ctx.arc(z.x, z.y, z.r, 0, Math.PI*2); ctx.fill();
+      // Plated armor stripes
+      ctx.strokeStyle = '#6a7a8a';
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(z.x, z.y, z.r - 4, 0, Math.PI * 2); ctx.stroke();
+      // Glowing orange eyes
+      ctx.fillStyle = '#ffa040';
+      const meo = z.r * 0.32;
+      ctx.beginPath(); ctx.arc(z.x - meo, z.y - meo * 0.3, 3, 0, Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.arc(z.x + meo, z.y - meo * 0.3, 3, 0, Math.PI*2); ctx.fill();
+      // HP bar — always shown
+      const mbw = z.r * 2.4;
+      ctx.fillStyle = '#222';
+      ctx.fillRect(z.x - mbw/2, z.y - z.r - 10, mbw, 4);
+      ctx.fillStyle = '#ffa040';
+      ctx.fillRect(z.x - mbw/2, z.y - z.r - 10, mbw * (z.hp / z.hpMax), 4);
+      continue;
+    }
     if (z.isBoss) {
       // pulsing aura is drawn regardless so the boss still feels boss-y
       const pulse = 1 + Math.sin(gameTime * 4) * 0.08;
@@ -5059,8 +5401,58 @@ function render() {
       if (hasCustomSprite(spriteId)) {
         drawCustomSprite(spriteId, z.x, z.y, z.r * 2.4);
       } else {
+        // Body
         ctx.fillStyle = z.color;
         ctx.beginPath(); ctx.arc(z.x, z.y, z.r, 0, Math.PI*2); ctx.fill();
+        // Per-type visual flourishes
+        if (z.type === 'exploder') {
+          // Pulsing dark core hints at the bomb inside.
+          const pulse = 0.5 + 0.5 * Math.sin(gameTime * 9 + (z.fuse || 0));
+          ctx.fillStyle = `rgba(255, 220, 80, ${0.25 + 0.35 * pulse})`;
+          ctx.beginPath(); ctx.arc(z.x, z.y, z.r * 0.6, 0, Math.PI*2); ctx.fill();
+          ctx.fillStyle = '#5a0a00';
+          ctx.beginPath(); ctx.arc(z.x, z.y, z.r * 0.35, 0, Math.PI*2); ctx.fill();
+        } else if (z.type === 'healer') {
+          ctx.fillStyle = '#fff';
+          ctx.fillRect(z.x - 1.5, z.y - 6, 3, 12);
+          ctx.fillRect(z.x - 6, z.y - 1.5, 12, 3);
+        } else if (z.type === 'spitter') {
+          // dark drool mouth + bulge
+          ctx.fillStyle = '#3a1a4a';
+          ctx.beginPath(); ctx.arc(z.x, z.y + z.r * 0.45, z.r * 0.32, 0, Math.PI*2); ctx.fill();
+        } else if (z.type === 'shielded') {
+          // Shield arc on the front (facing the player)
+          const ang = Math.atan2(player.y - z.y, player.x - z.x);
+          ctx.save();
+          ctx.translate(z.x, z.y);
+          ctx.rotate(ang);
+          ctx.strokeStyle = '#c0d8e8';
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.arc(0, 0, z.r + 3, -0.7, 0.7);
+          ctx.stroke();
+          // metal studs
+          ctx.fillStyle = '#9bb4c8';
+          for (let k = -1; k <= 1; k++) {
+            const a = k * 0.45;
+            ctx.beginPath(); ctx.arc(Math.cos(a) * (z.r + 3), Math.sin(a) * (z.r + 3), 1.6, 0, Math.PI*2); ctx.fill();
+          }
+          ctx.restore();
+        } else if (z.type === 'spawner') {
+          // Egg sacs on the back hint at the upcoming spawn
+          ctx.fillStyle = '#a07060';
+          for (let k = 0; k < 3; k++) {
+            const a = (k - 1) * 0.5 + Math.PI;
+            ctx.beginPath();
+            ctx.arc(z.x + Math.cos(a) * z.r * 0.6, z.y + Math.sin(a) * z.r * 0.6, 3, 0, Math.PI*2);
+            ctx.fill();
+          }
+        } else if (z.type === 'spawn-minion') {
+          // little hatchling — single dark dot eye
+          ctx.fillStyle = '#fff';
+          ctx.beginPath(); ctx.arc(z.x, z.y - 1, 1.2, 0, Math.PI*2); ctx.fill();
+        }
+        // Eyes (drawn last so they sit on top of the body decorations)
         ctx.fillStyle = '#1a1a1a';
         const eo = z.r * 0.3;
         ctx.beginPath(); ctx.arc(z.x - eo, z.y - eo*0.3, 1.5, 0, Math.PI*2); ctx.fill();
@@ -5079,6 +5471,24 @@ function render() {
   // bullets
   for (const b of bullets) {
     drawBullet(b);
+  }
+
+  // Zombie projectiles (spitter goo) — drawn above the player bullets so they
+  // stand out against the splatter, but below the zombies so they read as
+  // coming "out" of the enemy.
+  for (const zb of zombieBullets) {
+    ctx.fillStyle = zb.color;
+    ctx.beginPath(); ctx.arc(zb.x, zb.y, zb.r, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = '#3a1a4a';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    // wobble glob — small flecks of the same color trailing
+    ctx.fillStyle = zb.color;
+    ctx.globalAlpha = 0.55;
+    ctx.beginPath();
+    ctx.arc(zb.x - zb.vx * 0.012, zb.y - zb.vy * 0.012, zb.r * 0.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
   }
 
   // chicken summons (drawn above bullets so they're easy to track)
@@ -5665,6 +6075,23 @@ function render() {
   vg.addColorStop(1, 'rgba(0,0,0,0.45)');
   ctx.fillStyle = vg;
   ctx.fillRect(0, 0, W, H);
+
+  // Blackout event — vision shrinks to a small lit circle around the player.
+  // Fades in for the first second, fades out for the last second so the
+  // transition isn't jarring.
+  if (activeEvent && activeEvent.type === 'blackout') {
+    const t = activeEvent.timer;
+    let intensity = 1;
+    if (t < 1) intensity = t;             // fading out
+    else if (t > 9) intensity = 10 - t;   // fading in (timer starts at 10)
+    intensity = Math.max(0, Math.min(1, intensity));
+    const r = 160;
+    const bg = ctx.createRadialGradient(player.x, player.y, r * 0.5, player.x, player.y, r * 1.6);
+    bg.addColorStop(0, 'rgba(0,0,0,0)');
+    bg.addColorStop(1, `rgba(0,0,0,${0.92 * intensity})`);
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, W, H);
+  }
 
   // red damage flash
   if (flashRed > 0) {
@@ -8296,7 +8723,10 @@ function tick() {
     updateBladeCrates(dt);
     updateSummons(dt);
     updatePets(dt);
+    updateZombieBullets(dt);
+    updateHealPulses(dt);
     updateHealFields(dt);
+    updateArenaEvent(dt);
     updateAbilityBooks(dt);
     updateParticles(dt);
     updateDecals(dt);
