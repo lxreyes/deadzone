@@ -596,34 +596,38 @@ const WEAPONS = {
   // Marked traderOnly so they can never drop, decay into storage, or appear
   // in Arsenal. They only enter the world via the trader's shop tab and
   // disappear forever when the player swaps to a different weapon.
-  fish:    { name: 'Fish Slap',        shots: 7, spread: 0.40, damage: 0.55, fireRate: 0.6, bulletSpeed: 0.75, pierce: 0, life: 0.45, color: '#9bc8e8', tag: 'F', traderOnly: true,
-             bulletKind: 'fish', bulletKnock: 380, desc: 'Slaps a wide cone of stinky fish · big knockback' },
-  pizza:   { name: 'Pizza Cutter',     shots: 1, spread: 0.00, damage: 1.0, fireRate: 1.1, bulletSpeed: 1.1, pierce: 0, life: 2.2, color: '#e84030', tag: 'Z', traderOnly: true,
-             bulletKind: 'pizza', bounces: 6, clearHitsInterval: 0.22,
+  fish:    { name: 'Fish Slap',        shots: 7, spread: 0.40, damage: 1.10, fireRate: 0.9, bulletSpeed: 0.85, pierce: 0, life: 0.50, color: '#9bc8e8', tag: 'F', traderOnly: true,
+             bulletKind: 'fish', bulletKnock: 620,
+             desc: 'Cone of stinky fish · massive knockback' },
+  pizza:   { name: 'Pizza Cutter',     shots: 1, spread: 0.00, damage: 2.2, fireRate: 1.4, bulletSpeed: 1.2, pierce: 0, life: 2.6, color: '#e84030', tag: 'Z', traderOnly: true,
+             bulletKind: 'pizza', bounces: 10, clearHitsInterval: 0.18,
              desc: 'Bouncing pizza saws through crowds · re-hits' },
-  toaster: { name: 'Toaster Cannon',   shots: 1, spread: 0.06, damage: 1.6, fireRate: 0.75, bulletSpeed: 0.9, pierce: 0, life: 1.5, color: '#d8a060', tag: 'A', traderOnly: true,
-             explosive: true, blastR: 55, blastDmg: 18, bulletKind: 'toast', spawnToasts: 3,
-             desc: 'Scalding toast pops into 3 shrapnel slices' },
-  confetti:{ name: 'Confetti Bomb',    shots: 10, spread: 0.55, damage: 0.35, fireRate: 0.65, bulletSpeed: 1.0, pierce: 0, life: 1.0, color: '#ff80c0', tag: 'O', traderOnly: true,
+  toaster: { name: 'Toaster Cannon',   shots: 1, spread: 0.06, damage: 2.8, fireRate: 0.9, bulletSpeed: 1.0, pierce: 0, life: 1.7, color: '#d8a060', tag: 'A', traderOnly: true,
+             explosive: true, blastR: 80, blastDmg: 50, bulletKind: 'toast', spawnToasts: 6,
+             desc: 'Scalding toast · huge blast + 6 shrapnel slices' },
+  confetti:{ name: 'Confetti Bomb',    shots: 12, spread: 0.55, damage: 0.85, fireRate: 0.85, bulletSpeed: 1.1, pierce: 0, life: 1.1, color: '#ff80c0', tag: 'O', traderOnly: true,
              bulletKind: 'confetti', randomEffect: true,
+             effectDur: 5, effectDps: 18,
              desc: 'Streamers · each carries a random status effect' },
-  mower:   { name: 'Lawnmower',        shots: 3, spread: 0.30, damage: 0.5, fireRate: 7.5, bulletSpeed: 0.55, pierce: 0, life: 0.3, color: '#5cd86b', tag: 'M', traderOnly: true,
+  mower:   { name: 'Lawnmower',        shots: 4, spread: 0.32, damage: 1.0, fireRate: 9.0, bulletSpeed: 0.6, pierce: 0, life: 0.35, color: '#5cd86b', tag: 'M', traderOnly: true,
              bulletKind: 'mower', dropsHazard: 'grass',
-             desc: 'Grass shards leave a damaging clipping field' },
-  noodle:  { name: 'Spaghetti Launcher', shots: 1, spread: 0.0, damage: 1.0, fireRate: 0.85, bulletSpeed: 0.95, pierce: 3, life: 1.6, color: '#ffd166', tag: 'N', traderOnly: true,
-             bulletKind: 'noodle', leavesSlick: true,
-             effect: 'poison', effectDur: 4, effectDps: 9,
-             desc: 'Piercing noodles · sticky tomato poison DoT' },
+             desc: 'Stream of grass shards · leaves a clipping field' },
+  // Spaghetti Beam — sustained laser. Each shot rips through the line of fire
+  // at very high speed (pierces everything) and explodes any zombie it kills
+  // into a small sauce hazard.
+  noodle:  { name: 'Spaghetti Beam',  shots: 1, spread: 0.0, damage: 1.6, fireRate: 24, bulletSpeed: 7.0, pierce: 99, life: 0.35, color: '#ff5050', tag: 'N', traderOnly: true,
+             bulletKind: 'laser', explodesIntoSauce: true,
+             desc: 'Sustained sauce laser · sauce splat on kill' },
 };
 // Trader stock — id + cost. Prices are deliberately higher than Arsenal
 // because these weapons are exclusive and the trader only visits sometimes.
 const TRADER_STOCK = [
-  { id: 'fish',     cost: 480 },
-  { id: 'pizza',    cost: 540 },
-  { id: 'toaster',  cost: 620 },
-  { id: 'confetti', cost: 500 },
-  { id: 'mower',    cost: 560 },
-  { id: 'noodle',   cost: 580 },
+  { id: 'fish',     cost: 540 },
+  { id: 'pizza',    cost: 620 },
+  { id: 'toaster',  cost: 760 },
+  { id: 'confetti', cost: 620 },
+  { id: 'mower',    cost: 660 },
+  { id: 'noodle',   cost: 720 },
 ];
 const DROPPABLE_WEAPONS = ['shotgun', 'smg', 'rifle', 'rocket', 'chicken', 'banana', 'duck', 'plus', 'tesla', 'orbit', 'rail', 'twin', 'crossbow', 'flame'];
 
@@ -1995,44 +1999,6 @@ function drawBullet(b) {
     ctx.restore();
     return;
   }
-  if (b.bulletKind === 'noodle') {
-    // Bundle of three wavy spaghetti strands — each offset on the Y axis and
-    // out of phase with the others, so the shape reads as a clump of noodles
-    // rather than a single banana-shaped curve. A small tomato-sauce splat
-    // sits at the head where it pierces.
-    const ang = Math.atan2(b.vy, b.vx);
-    ctx.save();
-    ctx.translate(b.x, b.y);
-    ctx.rotate(ang);
-    const len = 16;
-    const strands = [
-      { y: -3, color: '#ffd166', phase: 0.0 },
-      { y:  0, color: '#ffe089', phase: 1.4 },
-      { y:  3, color: '#ffd166', phase: 2.8 },
-    ];
-    ctx.lineWidth = 1.8;
-    ctx.lineCap = 'round';
-    for (const s of strands) {
-      ctx.strokeStyle = s.color;
-      ctx.beginPath();
-      for (let k = -len; k <= len; k += 2) {
-        const yy = s.y + Math.sin((k + gameTime * 14) * 0.5 + s.phase) * 1.6;
-        if (k === -len) ctx.moveTo(k, yy);
-        else            ctx.lineTo(k, yy);
-      }
-      ctx.stroke();
-    }
-    ctx.lineCap = 'butt';
-    // tomato-sauce splat at the tip (a small irregular blob, not a circle)
-    ctx.fillStyle = '#d63030';
-    ctx.beginPath();
-    ctx.arc(len + 1, -1, 2.2, 0, Math.PI * 2);
-    ctx.arc(len + 2, 1, 1.5, 0, Math.PI * 2);
-    ctx.arc(len - 1, 2, 1.2, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
-    return;
-  }
   if (b.bulletKind === 'bomb') {
     // round black bomb body with a glowing fuse on top
     ctx.save();
@@ -2056,6 +2022,33 @@ function drawBullet(b) {
     ctx.beginPath(); ctx.arc(4, -7, 1.8 * flicker, 0, Math.PI*2); ctx.fill();
     ctx.fillStyle = '#fff5b8';
     ctx.beginPath(); ctx.arc(4, -7, 0.8, 0, Math.PI*2); ctx.fill();
+    ctx.restore();
+    return;
+  }
+  if (b.bulletKind === 'laser') {
+    // Spaghetti Beam — bright sauce-red streak with a soft yellow halo and
+    // a hot white core. Length scales with velocity for that "beam in flight"
+    // feel even though it's still a discrete bullet.
+    const ang = Math.atan2(b.vy, b.vx);
+    const sp = Math.hypot(b.vx, b.vy);
+    const len = Math.min(120, sp * 0.05);
+    ctx.save();
+    ctx.translate(b.x, b.y);
+    ctx.rotate(ang);
+    // outer halo
+    ctx.strokeStyle = 'rgba(255, 209, 102, 0.45)';
+    ctx.lineCap = 'round';
+    ctx.lineWidth = 8;
+    ctx.beginPath(); ctx.moveTo(-len, 0); ctx.lineTo(4, 0); ctx.stroke();
+    // sauce-red beam
+    ctx.strokeStyle = '#ff5050';
+    ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.moveTo(-len * 0.9, 0); ctx.lineTo(4, 0); ctx.stroke();
+    // hot white core
+    ctx.strokeStyle = '#fff5d6';
+    ctx.lineWidth = 1.8;
+    ctx.beginPath(); ctx.moveTo(-len * 0.7, 0); ctx.lineTo(3, 0); ctx.stroke();
+    ctx.lineCap = 'butt';
     ctx.restore();
     return;
   }
@@ -3467,6 +3460,7 @@ function tryShoot(nowSec) {
       effect: w.randomEffect ? randomConfettiEffect() : (w.effect || null),
       effectDur: w.effectDur || 0,
       effectDps: w.effectDps || 0,
+      explodesIntoSauce: !!w.explodesIntoSauce,
     });
   }
 }
@@ -5114,9 +5108,9 @@ function updateBullets(dt) {
       }
     }
     if (b.life <= 0 || (b.bulletKind !== 'orbit' && (b.x < -20 || b.x > W + 20 || b.y < -20 || b.y > H + 20))) {
-      // banana / noodle drop a slick where they die
+      // banana drops a slick where it dies
       if (b.leavesSlick && b.x > 0 && b.x < W && b.y > 0 && b.y < H) {
-        addSlick(b.x, b.y, b.bulletKind === 'noodle' ? 'noodle' : 'banana');
+        addSlick(b.x, b.y, 'banana');
       }
       // Lawnmower leaves a damaging grass-clipping field on expiry
       if (b.dropsHazard === 'grass' && b.x > 0 && b.x < W && b.y > 0 && b.y < H) {
@@ -5191,6 +5185,8 @@ function updateBullets(dt) {
           z.slowTimer = Math.max(z.slowTimer || 0, player.special.slow);
         }
         if (z.hp <= 0) {
+          // Spaghetti Beam splatters the zombie into a sauce hazard on kill.
+          if (b.explodesIntoSauce) spawnHazard(z.x, z.y, 'sauce');
           killZombie(z);
           if (z.isBoss) shake(18);
           zombies.splice(j, 1);
@@ -5301,7 +5297,15 @@ function spawnToastShrapnel(x, y, n, dmg) {
 // damages any zombie standing on it.
 function spawnHazard(x, y, kind) {
   if (kind === 'grass') {
-    hazards.push({ x, y, r: 28, life: 3.0, max: 3.0, dps: 18, kind: 'grass' });
+    hazards.push({ x, y, r: 30, life: 4.0, max: 4.0, dps: 35, kind: 'grass' });
+  } else if (kind === 'sauce') {
+    hazards.push({ x, y, r: 26, life: 2.4, max: 2.4, dps: 30, kind: 'sauce' });
+    // Sauce burst for impact feedback
+    for (let k = 0; k < 14; k++) {
+      const a = Math.random() * Math.PI * 2;
+      const sp = 80 + Math.random() * 220;
+      particles.push({ x, y, vx: Math.cos(a)*sp, vy: Math.sin(a)*sp, life: 0.5 + Math.random()*0.3, color: k % 3 === 0 ? '#ffd166' : '#a82020' });
+    }
   }
 }
 
@@ -5624,68 +5628,65 @@ function render() {
     ctx.translate(s.x, s.y);
     ctx.rotate(s.ang);
     ctx.globalAlpha = a * 0.85;
-    if (s.kind === 'noodle') {
-      // pile of spaghetti — sauce smear + curly noodle strands on top
-      ctx.fillStyle = '#a83020';
-      ctx.beginPath(); ctx.ellipse(0, 0, s.r * 0.9, s.r * 0.6, 0, 0, Math.PI*2); ctx.fill();
-      ctx.strokeStyle = '#ffd166';
-      ctx.lineWidth = 2;
-      for (let k = -2; k <= 2; k++) {
-        ctx.beginPath();
-        for (let xx = -s.r * 0.85; xx <= s.r * 0.85; xx += 2) {
-          const yy = Math.sin((xx + k * 3) * 0.32) * (s.r * 0.25) + k * 2.4;
-          if (xx === -Math.floor(s.r * 0.85 / 2) * 2) ctx.moveTo(xx, yy);
-          else                                        ctx.lineTo(xx, yy);
-        }
-        ctx.stroke();
-      }
-      // small parmesan flecks
-      ctx.fillStyle = '#fff5d6';
-      for (let k = 0; k < 4; k++) {
-        ctx.beginPath();
-        ctx.arc((Math.random() - 0.5) * s.r * 1.4, (Math.random() - 0.5) * s.r, 1, 0, Math.PI*2);
-        ctx.fill();
-      }
-    } else {
-      // banana peel — original render
-      ctx.fillStyle = '#ffe98a';
-      ctx.beginPath(); ctx.ellipse(0, 0, s.r * 0.95, s.r * 0.55, 0, 0, Math.PI*2); ctx.fill();
-      ctx.fillStyle = '#ffd942';
-      ctx.beginPath();
-      ctx.moveTo(-s.r * 0.9, 2);
-      ctx.quadraticCurveTo(-s.r * 0.4, -s.r * 0.55, s.r * 0.5, -s.r * 0.3);
-      ctx.quadraticCurveTo(s.r * 0.95, 0, s.r * 0.45, s.r * 0.4);
-      ctx.quadraticCurveTo(-s.r * 0.4, s.r * 0.55, -s.r * 0.9, 2);
-      ctx.closePath();
-      ctx.fill();
-      ctx.strokeStyle = '#a07e1c';
-      ctx.lineWidth = 1;
-      ctx.stroke();
-      ctx.fillStyle = '#6a4a0a';
-      ctx.fillRect(s.r * 0.55, -3, 4, 3);
-    }
+    // banana peel — slippery sheen + peel shape + dark stem
+    ctx.fillStyle = '#ffe98a';
+    ctx.beginPath(); ctx.ellipse(0, 0, s.r * 0.95, s.r * 0.55, 0, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#ffd942';
+    ctx.beginPath();
+    ctx.moveTo(-s.r * 0.9, 2);
+    ctx.quadraticCurveTo(-s.r * 0.4, -s.r * 0.55, s.r * 0.5, -s.r * 0.3);
+    ctx.quadraticCurveTo(s.r * 0.95, 0, s.r * 0.45, s.r * 0.4);
+    ctx.quadraticCurveTo(-s.r * 0.4, s.r * 0.55, -s.r * 0.9, 2);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = '#a07e1c';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.fillStyle = '#6a4a0a';
+    ctx.fillRect(s.r * 0.55, -3, 4, 3);
     ctx.restore();
     ctx.globalAlpha = 1;
   }
 
-  // Damaging hazards (Lawnmower grass clippings) — drawn above the slicks
-  // but below the shop zone / zombies. Pulsing alpha keeps them readable
-  // without dominating the field.
+  // Damaging hazards (Lawnmower clippings + Spaghetti Beam sauce splats) —
+  // drawn above the slicks but below the shop zone / zombies. Pulsing alpha
+  // keeps them readable without dominating the field.
   for (const h of hazards) {
     const a = Math.max(0, Math.min(1, h.life / h.max));
     const pulse = 0.6 + 0.4 * Math.sin(gameTime * 8 + h.x * 0.05);
-    ctx.globalAlpha = a * 0.6;
-    // soft inner fill
-    ctx.fillStyle = '#3a8a4a';
-    ctx.beginPath(); ctx.arc(h.x, h.y, h.r, 0, Math.PI*2); ctx.fill();
-    // grass clipping flecks
-    ctx.fillStyle = '#5cd86b';
-    for (let k = 0; k < 7; k++) {
-      const ang = (k / 7) * Math.PI * 2 + h.x * 0.01;
-      const rr = h.r * (0.4 + ((k * 17) % 50) / 100);
-      ctx.beginPath();
-      ctx.arc(h.x + Math.cos(ang) * rr, h.y + Math.sin(ang) * rr, 2 * pulse, 0, Math.PI*2);
-      ctx.fill();
+    ctx.globalAlpha = a * 0.7;
+    if (h.kind === 'sauce') {
+      // dark red sauce puddle with a few brighter chunks
+      ctx.fillStyle = '#a82020';
+      ctx.beginPath(); ctx.arc(h.x, h.y, h.r, 0, Math.PI*2); ctx.fill();
+      // bright tomato highlight
+      ctx.fillStyle = '#d63030';
+      ctx.beginPath(); ctx.arc(h.x - h.r * 0.2, h.y - h.r * 0.15, h.r * 0.55, 0, Math.PI*2); ctx.fill();
+      // pasta flecks / meatball chunks
+      ctx.fillStyle = '#ffd166';
+      for (let k = 0; k < 5; k++) {
+        const ang = (k / 5) * Math.PI * 2 + h.x * 0.01;
+        const rr = h.r * (0.35 + ((k * 23) % 40) / 100);
+        ctx.beginPath();
+        ctx.arc(h.x + Math.cos(ang) * rr, h.y + Math.sin(ang) * rr, 1.8 * pulse, 0, Math.PI*2);
+        ctx.fill();
+      }
+      // outer outline
+      ctx.strokeStyle = '#7a1818';
+      ctx.lineWidth = 1.2;
+      ctx.beginPath(); ctx.arc(h.x, h.y, h.r, 0, Math.PI*2); ctx.stroke();
+    } else {
+      // grass clipping field (Lawnmower)
+      ctx.fillStyle = '#3a8a4a';
+      ctx.beginPath(); ctx.arc(h.x, h.y, h.r, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = '#5cd86b';
+      for (let k = 0; k < 7; k++) {
+        const ang = (k / 7) * Math.PI * 2 + h.x * 0.01;
+        const rr = h.r * (0.4 + ((k * 17) % 50) / 100);
+        ctx.beginPath();
+        ctx.arc(h.x + Math.cos(ang) * rr, h.y + Math.sin(ang) * rr, 2 * pulse, 0, Math.PI*2);
+        ctx.fill();
+      }
     }
     ctx.globalAlpha = 1;
   }
@@ -7156,12 +7157,12 @@ const TUTORIAL_PAGES = [
         'Trader weapons vanish on swap · can\'t be re-collected',
       ] },
       { heading: 'Unique Mechanics', lines: [
-        'Fish Slap — big KNOCKBACK · launches zombies away',
+        'Fish Slap — massive KNOCKBACK · launches zombies away',
         'Pizza Cutter — re-hits the same zombie · saws crowds',
-        'Toaster Cannon — explosion spits 3 toast shrapnel',
+        'Toaster Cannon — huge blast + 6 toast shrapnel',
         'Confetti Bomb — each streamer = random status effect',
         'Lawnmower — leaves a damaging clipping field on the ground',
-        'Spaghetti Launcher — pierces · sticky tomato POISON',
+        'Spaghetti Beam — sustained LASER · sauce splat on kill',
       ] },
       { heading: 'Confetti Color Key', lines: [
         'Red = burn (damage over time)',
