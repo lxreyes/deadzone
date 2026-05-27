@@ -658,6 +658,9 @@ const player2 = {
 // targeting walk this array.
 const players = [player];
 let coopEnabled = false;
+// Auto-shoot toggle — when on, P1 also auto-fires at the nearest zombie
+// (P2 always auto-fires; this just brings P1 in line for hands-free play).
+let autoShoot = false;
 
 function enableCoop() {
   if (coopEnabled) return;
@@ -1465,6 +1468,7 @@ const cheatSections = [
         player.hp = player.maxHp;
       } },
     { label: 'God Mode', toggle: () => godMode, run() { godMode = !godMode; } },
+    { label: 'Auto-Shoot', toggle: () => autoShoot, run() { autoShoot = !autoShoot; } },
   ]},
   { id: 'waves', name: 'Waves & Bosses', open: false, items: [
     { label: '+5 Waves', run() {
@@ -5577,20 +5581,24 @@ function updateP2(dt) {
       if (player2.buffs[k] < 0) player2.buffs[k] = 0;
     }
   }
-  // Auto-fire: find nearest non-dummy zombie within range
+  // Auto-fire — shared helper finds nearest threat + fires through tryShootFor
+  playerAutoShoot(player2, gameTime);
+}
+
+// Shared auto-fire used by P2 (always) and P1 (when the autoShoot toggle is
+// on). Finds the nearest non-dummy zombie within 380px and fires at it
+// using the player's shoot path so all the existing perk math applies.
+function playerAutoShoot(p, nowSec) {
   let near = null, bd2 = 380 * 380;
   for (const z of zombies) {
-    if (z.isDummy || z.isBoss) {
-      // bosses are huge and far — still target them but with lower priority
-      if (!z.isBoss) continue;
-    }
-    const zdx = z.x - player2.x, zdy = z.y - player2.y;
+    if (z.isDummy) continue;
+    const zdx = z.x - p.x, zdy = z.y - p.y;
     const d2 = zdx*zdx + zdy*zdy;
     if (d2 < bd2) { bd2 = d2; near = z; }
   }
   if (near) {
-    const ang = Math.atan2(near.y - player2.y, near.x - player2.x);
-    tryShootFor(player2, ang, gameTime);
+    const ang = Math.atan2(near.y - p.y, near.x - p.x);
+    tryShootFor(p, ang, nowSec);
   }
 }
 
@@ -11116,7 +11124,10 @@ function tick() {
         floaters.push({ x: player2.x, y: player2.y - 24, text: 'P2 RESPAWN', life: 1.6, color: '#9bf07a' });
       }
     }
-    if (mouse.down && !inShop() && !pendingCards) tryShoot(gameTime);
+    if (!inShop() && !pendingCards) {
+      if (mouse.down) tryShoot(gameTime);
+      if (autoShoot)  playerAutoShoot(player, gameTime);
+    }
     updateBullets(dt);
     updateZombies(dt);
     updateCoins(dt);
