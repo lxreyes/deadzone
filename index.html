@@ -8683,11 +8683,13 @@ function drawSpriteEditor() {
     tx += tabW + tabGap;
   }
 
-  // Grid — centered horizontally, 480x480, shifted down to accommodate two-row tabs
-  const gridSize = 480;
-  const cell = gridSize / SPRITE_SIZE; // 30px per cell
+  // Grid — sized to fit between the two-row tab header and the bottom
+  // Clear/Done buttons. 464 = 29px per cell, leaves room for the buttons
+  // (h=36 each) below the grid plus ~10px of canvas margin.
+  const gridSize = 464;
+  const cell = gridSize / SPRITE_SIZE; // 29px per cell
   const gx = (W - gridSize) / 2 - 60; // shift left to make room for palette
-  const gy = 168;
+  const gy = 156;
   spriteEditorRects.grid = { x: gx, y: gy, w: gridSize, h: gridSize, cell };
 
   // checkerboard background to show transparency
