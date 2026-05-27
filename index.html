@@ -533,8 +533,12 @@ const player = {
   lastShot: 0,
   invuln: 0,            // seconds
   weapon: 'pistol',
-  secondary: 'katana',     // active blade slot; null = none
+  secondary: 'katana',     // active utility slot; null = none
   lastSecondary: -10,      // game-time of last swing/throw for cooldown
+  swingTimer: 0,           // >0 while a melee swing animation is playing
+  swingDur: 0.2,
+  swingStyle: 'slash',     // 'slash' or 'smash'
+  swingAng: 0,             // aim angle captured at swing start
   // Dash is a permanent ability now — bound to Shift.
   lastDash: -10,
   dashCooldown: 1.4,
@@ -596,9 +600,11 @@ const DROPPABLE_WEAPONS = ['shotgun', 'smg', 'rifle', 'rocket', 'chicken', 'bana
 //   chakram = spinning disc that loops back to the player
 const SECONDARIES = {
   katana:  { name: 'Katana',  kind: 'melee',     cooldown: 0.45, damage: 50, color: '#e8edf4', tag: 'K',
-             range: 80, arc: Math.PI * 0.65, knockback: 90 },
+             range: 80, arc: Math.PI * 0.65, knockback: 90,
+             swingStyle: 'slash', swingDur: 0.18 },
   warhammer:{ name: 'Warhammer', kind: 'melee', cooldown: 0.95, damage: 38, color: '#9aa0ab', tag: 'W',
-             range: 70, arc: Math.PI * 0.55, knockback: 380 },
+             range: 70, arc: Math.PI * 0.55, knockback: 380,
+             swingStyle: 'smash', swingDur: 0.32 },
   kunai:   { name: 'Kunai',   kind: 'thrown',    cooldown: 0.30, damage: 16, color: '#8aa0b4', tag: 'k',
              shots: 3, spread: 0.16, speed: 920, life: 0.7, pierce: 1 },
   chakram: { name: 'Chakram', kind: 'returning', cooldown: 1.20, damage: 24, color: '#ff8040', tag: 'C',
@@ -1075,7 +1081,7 @@ const cheatSections = [
         const i = ks.indexOf(player.weapon);
         player.weapon = ks[(i + 1) % ks.length];
       } },
-    { label: () => `Blade: ${player.secondary ? SECONDARIES[player.secondary].name : 'None'}`,
+    { label: () => `Utility: ${player.secondary ? SECONDARIES[player.secondary].name : 'None'}`,
       run() {
         const ks = [null, ...SECONDARY_KEYS];
         const i = ks.indexOf(player.secondary);
@@ -1466,6 +1472,72 @@ function drawGun(weapon, r) {
       break;
     }
   }
+}
+
+// Animated melee weapon shown briefly during a swing/smash. The arc visual
+// (slashes[]) is still drawn separately so the impact sells itself; this
+// function draws the actual weapon in motion so the player sees the action.
+function drawSwingingWeapon(style, px, py, baseAng, r, progress) {
+  ctx.save();
+  ctx.translate(px, py);
+  ctx.strokeStyle = '#15151a';
+  ctx.lineWidth = 1;
+  if (style === 'smash') {
+    // Warhammer — overhead arc that accelerates as it falls (ease-in).
+    // -90° (perpendicular to aim) at start → 0° (along aim) at end.
+    const eased = progress * progress;
+    const angle = -Math.PI / 2 + eased * (Math.PI / 2);
+    ctx.rotate(baseAng + angle);
+    // wooden shaft
+    ctx.fillStyle = '#3a2a1a';
+    ctx.fillRect(r * 0.5, -3, r * 2.0, 6);
+    ctx.strokeRect(r * 0.5, -3, r * 2.0, 6);
+    // grip wrap detail
+    ctx.fillStyle = '#1a0e04';
+    ctx.fillRect(r * 0.55, -3, 6, 6);
+    // heavy hammer head
+    const hx = r * 2.3;
+    ctx.fillStyle = '#9aa0ab';
+    ctx.fillRect(hx, -10, 16, 20);
+    ctx.strokeRect(hx, -10, 16, 20);
+    ctx.fillStyle = '#5a5d66';
+    ctx.fillRect(hx, -2, 16, 4);
+    // small spike on the front face
+    ctx.fillStyle = '#7a7d86';
+    ctx.beginPath();
+    ctx.moveTo(hx + 16, -6); ctx.lineTo(hx + 22, 0); ctx.lineTo(hx + 16, 6); ctx.closePath();
+    ctx.fill();
+    // impact flash near the end of the swing
+    if (progress > 0.85) {
+      ctx.fillStyle = 'rgba(255, 240, 180, ' + (1 - progress) * 4 + ')';
+      ctx.beginPath(); ctx.arc(hx + 18, 0, 16, 0, Math.PI*2); ctx.fill();
+    }
+  } else {
+    // Katana — quick horizontal sweep. Ease-out so it whooshes fast then
+    // settles. Goes from +halfSweep to -halfSweep relative to the aim.
+    const eased = 1 - (1 - progress) * (1 - progress);
+    const sweep = Math.PI * 1.0;
+    const angle = sweep / 2 - eased * sweep;
+    ctx.rotate(baseAng + angle);
+    // guard
+    ctx.fillStyle = '#3a2a1a';
+    ctx.fillRect(r * 0.4, -5, 5, 10);
+    ctx.strokeRect(r * 0.4, -5, 5, 10);
+    // long blade
+    ctx.fillStyle = '#e8edf4';
+    ctx.fillRect(r * 0.55, -2.5, r * 2.4, 5);
+    ctx.strokeRect(r * 0.55, -2.5, r * 2.4, 5);
+    // bright edge highlight
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(r * 0.6, -2, r * 2.3, 1);
+    // pointed tip
+    ctx.fillStyle = '#fff';
+    ctx.beginPath();
+    ctx.moveTo(r * 2.95, -3); ctx.lineTo(r * 2.95 + 6, 0); ctx.lineTo(r * 2.95, 3); ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+  }
+  ctx.restore();
 }
 
 // Dispatch bullet drawing to a gag-specific shape, falling back to a plain disc.
@@ -3282,6 +3354,12 @@ function updateBuildings(dt) {
 }
 
 function swingMelee(def, ang) {
+  // Kick off the visible weapon animation — the slash arc + the held weapon
+  // both share this timer so the visuals stay in sync.
+  player.swingDur = def.swingDur || 0.22;
+  player.swingTimer = player.swingDur;
+  player.swingStyle = def.swingStyle || 'slash';
+  player.swingAng = ang;
   // damage every zombie inside the arc in front of the player
   for (let i = zombies.length - 1; i >= 0; i--) {
     const z = zombies[i];
@@ -3632,6 +3710,8 @@ function updatePlayer(dt) {
   if (player.special.regen) {
     player.hp = Math.min(player.maxHp, player.hp + player.special.regen * dt);
   }
+  // Melee swing animation timer
+  if (player.swingTimer > 0) player.swingTimer = Math.max(0, player.swingTimer - dt);
   // Active ability timers tick down here so they affect this and next frames.
   if (player.rageTimer > 0) player.rageTimer = Math.max(0, player.rageTimer - dt);
   if (bulletTimeTimer > 0)  bulletTimeTimer  = Math.max(0, bulletTimeTimer  - dt);
@@ -4886,6 +4966,12 @@ function render() {
     ctx.rotate(facing);
     drawGun(player.weapon, player.r);
     ctx.restore();
+
+    // Melee swing animation (katana slash, warhammer smash, etc.)
+    if (player.swingTimer > 0 && player.swingDur > 0) {
+      const progress = Math.max(0, Math.min(1, 1 - (player.swingTimer / player.swingDur)));
+      drawSwingingWeapon(player.swingStyle, player.x, player.y, player.swingAng, player.r, progress);
+    }
   }
 
   // build-mode ghost preview at the cursor (in world coords)
@@ -6069,7 +6155,7 @@ function drawBladeSwapPrompt() {
   ctx.fillStyle = '#fff';
   ctx.font = 'bold 13px system-ui';
   ctx.textAlign = 'center';
-  ctx.fillText('SECONDARY CRATE', x + w / 2, y + 20);
+  ctx.fillText('UTILITY CRATE', x + w / 2, y + 20);
 
   const drawSlot = (xs, ys, def, label, align) => {
     if (!def) {
