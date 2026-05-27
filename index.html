@@ -6618,6 +6618,13 @@ function hardReset() {
 
 // ---------- Render ----------
 function render() {
+  // Defensive canvas reset — if a prior render threw mid-frame it could
+  // leave dangling ctx.save() / translate state behind, causing later
+  // frames to draw with the wrong transform (one classic "everything
+  // disappears" cause). setTransform(1,0,0,1,0,0) wipes any leftover
+  // transform + globalAlpha state.
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalAlpha = 1;
   ctx.clearRect(0, 0, W, H);
 
   // screen shake offsets the world layer
@@ -11120,7 +11127,38 @@ function drawTraderList(x, y, w, sy, clipY, clipH) {
 
 // ---------- Loop ----------
 let lastT = performance.now();
+// Tracks the last error logged so we don't spam the console with the same
+// throw 60 times a second. Cleared after a few seconds of clean frames.
+let lastErrorMsg = null;
+let lastErrorAt = 0;
+
 function tick() {
+  try {
+    tickBody();
+  } catch (err) {
+    const msg = String(err && err.stack || err);
+    if (msg !== lastErrorMsg || performance.now() - lastErrorAt > 2000) {
+      console.error('[tick error]', err);
+      lastErrorMsg = msg;
+      lastErrorAt = performance.now();
+    }
+    // Surface the error in-game so blank-screen bugs are obvious instead of
+    // silently confusing — and reset the transform so the next frame can
+    // draw cleanly.
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = 'rgba(214, 48, 48, 0.85)';
+    ctx.fillRect(W/2 - 240, H/2 - 30, 480, 60);
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 13px system-ui';
+    ctx.textAlign = 'center';
+    ctx.fillText('Render error — open DevTools console for details', W/2, H/2);
+    ctx.textAlign = 'left';
+  }
+  requestAnimationFrame(tick);
+}
+
+function tickBody() {
   const now = performance.now();
   const dt = Math.min(0.05, (now - lastT) / 1000);
   lastT = now;
@@ -11204,9 +11242,14 @@ function tick() {
   const wantCursor = useCustomCursor ? 'none' : 'crosshair';
   if (c.style.cursor !== wantCursor) c.style.cursor = wantCursor;
   if (useCustomCursor) drawCustomSprite('cursor', mouse.x, mouse.y, 28);
-
-  requestAnimationFrame(tick);
 }
+
+// Global error capture — if any handler (mousedown, keydown, etc.) throws
+// outside the tick loop, surface it in the console with a clear tag.
+window.addEventListener('error', (e) => {
+  console.error('[window error]', e.error || e.message);
+});
+
 tick();
 </script>
 </body>
