@@ -702,6 +702,34 @@ const WEAPONS = {
   noodle:  { name: 'Spaghetti Beam',  shots: 1, spread: 0.0, damage: 1.6, fireRate: 24, bulletSpeed: 7.0, pierce: 99, life: 0.35, color: '#ff5050', tag: 'N', traderOnly: true,
              bulletKind: 'laser', explodesIntoSauce: true,
              desc: 'Sustained sauce laser · sauce splat on kill' },
+  // ---- God-tier (cheats-only) ----
+  // cheatOnly weapons never drop, never appear in Arsenal/Storage, and can
+  // only be equipped from the cheats panel. They're absurdly powerful by
+  // design — a sandbox toy for testing wave scaling.
+  death: {
+    name: 'Death', shots: 24, spread: 0, damage: 8.0, fireRate: 10, bulletSpeed: 3.5,
+    pierce: 99, life: 0.6, color: '#ff2030', tag: '☠', cheatOnly: true,
+    pattern: 'death', bulletKind: 'laser',
+    desc: 'Dense red laser circle in every direction · sustained',
+  },
+  apocalypse: {
+    name: 'Apocalypse', shots: 1, spread: 0, damage: 6.0, fireRate: 4, bulletSpeed: 2.4,
+    pierce: 0, life: 1.0, color: '#ff8040', tag: 'A', cheatOnly: true,
+    explosive: true, blastR: 180, blastDmg: 200,
+    desc: 'Volley of massive explosive shells',
+  },
+  omni: {
+    name: 'Omnislash', shots: 8, spread: 0, damage: 12, fireRate: 2.5, bulletSpeed: 5.0,
+    pierce: 99, life: 0.5, color: '#9bf0ff', tag: '⊕', cheatOnly: true,
+    pattern: 'death', bulletKind: 'rail',
+    desc: '8 railgun beams in a star pattern',
+  },
+  voidstar: {
+    name: 'Void Star', shots: 1, spread: 0, damage: 3.0, fireRate: 30, bulletSpeed: 1.2,
+    pierce: 99, life: 4.0, color: '#c47eff', tag: '✦', cheatOnly: true,
+    pattern: 'orbit', orbitRadius: 90, orbitSpeed: 6.0,
+    desc: 'Infinite orbital ring · grinds everything nearby',
+  },
 };
 // Trader stock — id + cost. Prices are deliberately higher than Arsenal
 // because these weapons are exclusive and the trader only visits sometimes.
@@ -720,7 +748,9 @@ const DROPPABLE_WEAPONS = ['shotgun', 'smg', 'rifle', 'rocket', 'chicken', 'bana
 function shouldDropOldWeapon(weapon) {
   if (!weapon || weapon === 'pistol') return false;
   const def = WEAPONS[weapon];
-  if (def && def.traderOnly) return false;
+  // Trader-only weapons and cheat-only god weapons never enter the world —
+  // they vanish silently when swapped out instead of dropping for pickup.
+  if (def && (def.traderOnly || def.cheatOnly)) return false;
   return true;
 }
 
@@ -800,6 +830,9 @@ const SECONDARY_GROUPS = [
   { name: 'Tomes',   ids: ['chickenTome', 'batTome', 'wolfTome', 'spiderTome', 'spiritTome'] },
 ];
 const TRADER_PRIMARY_IDS = ['fish', 'pizza', 'toaster', 'confetti', 'mower', 'noodle'];
+// God-tier weapons — only reachable through the cheats panel. Listed in one
+// place so the cheats UI and any future leak-prevention paths can share.
+const GODTIER_PRIMARY_IDS = ['death', 'apocalypse', 'omni', 'voidstar'];
 
 // ---------- Pets (immortal companions, buy-once from the shop) ----------
 // Each pet follows the player and engages nearby zombies on its own. Unlike
@@ -1449,6 +1482,14 @@ const cheatSections = [
   })),
   { id: 'primary-trader', name: 'Primary · Trader', open: false,
     items: TRADER_PRIMARY_IDS.map(id => ({
+      label: () => (player.weapon === id ? '★ ' : '') + WEAPONS[id].name,
+      toggle: () => player.weapon === id,
+      run() { player.weapon = id; },
+    })),
+  },
+  // God-tier — cheats-only weapons that absolutely break the game on purpose
+  { id: 'primary-godtier', name: 'Primary · GOD TIER', open: false,
+    items: GODTIER_PRIMARY_IDS.map(id => ({
       label: () => (player.weapon === id ? '★ ' : '') + WEAPONS[id].name,
       toggle: () => player.weapon === id,
       run() { player.weapon = id; },
@@ -3890,6 +3931,13 @@ function tryShoot(nowSec) {
   } else if (w.pattern === 'twin') {
     // two parallel shots — same angle, offset perpendicular to aim
     angles = [baseAng, baseAng];
+  } else if (w.pattern === 'death') {
+    // Full-circle pattern — bullets evenly distributed around the player,
+    // anchored to baseAng so the ring slowly rotates with aim. Used by the
+    // "Death" laser and Omnislash god weapons.
+    angles = [];
+    const n = shots;
+    for (let i = 0; i < n; i++) angles.push(baseAng + (i / n) * Math.PI * 2);
   } else {
     // standard fan spread used by every original weapon
     angles = [];
@@ -8822,6 +8870,7 @@ function drawCheatSectionIcon(id, cx, cy, size, color) {
     case 'primary-basic':
     case 'primary-special':
     case 'primary-gag':
+    case 'primary-godtier':
     case 'primary-trader': // gun silhouette — barrel + grip
       ctx.fillRect(-s * 0.8, -s * 0.15, s * 1.5, s * 0.35);
       ctx.fillRect(-s * 0.65, s * 0.2, s * 0.3, s * 0.5);
@@ -8881,6 +8930,7 @@ function cheatSectionColor(id) {
     case 'primary-special':   return '#c47eff';
     case 'primary-gag':       return '#ffd166';
     case 'primary-trader':    return '#c47eff';
+    case 'primary-godtier':   return '#ff2030';
     case 'secondary-melee':   return '#e8edf4';
     case 'secondary-thrown':  return '#8aa0b4';
     case 'secondary-utility': return '#5cd86b';
