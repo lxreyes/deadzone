@@ -616,6 +616,15 @@ const SECONDARIES = {
   // Faster, more dangerous summons that bite once and fade quickly.
   batTome:     { name: 'Tome of Bats',     kind: 'summon', cooldown: 10.0, color: '#8a4ac0', tag: 'b',
                  summon: 'bat',     count: 5 },
+  // Tanky pack — fewer summons but each hits hard and lives longer.
+  wolfTome:    { name: 'Tome of Wolves',   kind: 'summon', cooldown: 14.0, color: '#7a5030', tag: 'w',
+                 summon: 'wolf',    count: 3 },
+  // Swarm — many fragile summons that overwhelm by numbers.
+  spiderTome:  { name: 'Tome of Spiders',  kind: 'summon', cooldown: 8.0,  color: '#222222', tag: 's',
+                 summon: 'spider',  count: 7 },
+  // Ethereal — fast, pierce-bullet-like; ignore obstacles, deal solid damage.
+  spiritTome:  { name: 'Tome of Spirits',  kind: 'summon', cooldown: 9.0,  color: '#9bf0ff', tag: 'g',
+                 summon: 'spirit',  count: 4 },
   // Drop a glowing pad that regenerates HP while you stand on it.
   healingField: { name: 'Healing Field', kind: 'field', cooldown: 14.0, color: '#5cd86b', tag: 'H',
                   radius: 50, life: 8, hps: 12 },
@@ -1985,6 +1994,16 @@ addEventListener('keydown', e => {
   }
 });
 addEventListener('keyup', e => { keys[e.code] = false; });
+
+// Scroll wheel cycles through unlocked abilities — down = next, up = prev.
+// Listener attached to the canvas only so scrolling outside the game still
+// works on the page (there's nothing else here, but it's the polite default).
+c.addEventListener('wheel', e => {
+  if (gameState !== 'playing') return;
+  if (e.deltaY === 0) return;
+  cycleAbility(e.deltaY > 0 ? 1 : -1);
+  e.preventDefault();
+}, { passive: false });
 // Drop any held movement when leaving play so the player doesn't keep walking
 // during a paused screen.
 function clearKeys() { for (const k in keys) keys[k] = false; mouse.down = false; }
@@ -2821,10 +2840,16 @@ function updateAbilityBooks(dt) {
 }
 
 function useSummon(def) {
-  // Per-kind stats so chickens vs. bats feel distinct
-  const stats = def.summon === 'bat'
-    ? { hp: 18, life: 9,  dmg: 36, speed: 230, burst: ['#8a4ac0', '#3a1850'] }
-    : { hp: 24, life: 12, dmg: 22, speed: 165, burst: ['#fff5b8', '#ffe066'] };
+  // Per-kind stats so each summon kind feels distinct.
+  const stats = (() => {
+    switch (def.summon) {
+      case 'bat':    return { hp: 18, life: 9,  dmg: 36, speed: 230, burst: ['#8a4ac0', '#3a1850'] };
+      case 'wolf':   return { hp: 60, life: 15, dmg: 52, speed: 145, burst: ['#7a5030', '#3a2410'] };
+      case 'spider': return { hp: 8,  life: 7,  dmg: 16, speed: 290, burst: ['#222222', '#5a3030'] };
+      case 'spirit': return { hp: 14, life: 8,  dmg: 28, speed: 250, burst: ['#9bf0ff', '#4a8a9a'] };
+      default:       return { hp: 24, life: 12, dmg: 22, speed: 165, burst: ['#fff5b8', '#ffe066'] };
+    }
+  })();
   for (let i = 0; i < def.count; i++) {
     const a = Math.random() * Math.PI * 2;
     summons.push({
@@ -4552,6 +4577,113 @@ function render() {
         ctx.lineWidth = 1.5;
         ctx.globalAlpha = 0.4;
         ctx.beginPath(); ctx.arc(s.x, s.y, 10, 0, Math.PI*2); ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
+    } else if (s.kind === 'wolf') {
+      const ang = Math.atan2(s.vy, s.vx);
+      ctx.save();
+      ctx.translate(s.x, s.y);
+      ctx.rotate(ang);
+      // body — larger oval
+      ctx.fillStyle = '#7a5030';
+      ctx.beginPath(); ctx.ellipse(0, 0, 11, 7, 0, 0, Math.PI*2); ctx.fill();
+      ctx.strokeStyle = '#1a0e04';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      // back stripe
+      ctx.fillStyle = '#5a3a20';
+      ctx.fillRect(-7, -2, 14, 4);
+      // tail
+      ctx.fillStyle = '#7a5030';
+      ctx.beginPath();
+      ctx.moveTo(-10, 0); ctx.lineTo(-15, -3); ctx.lineTo(-13, 2); ctx.closePath();
+      ctx.fill();
+      // ears
+      ctx.fillStyle = '#5a3a20';
+      ctx.beginPath();
+      ctx.moveTo(6, -4); ctx.lineTo(9, -8); ctx.lineTo(8, -3); ctx.closePath(); ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(6, 4); ctx.lineTo(9, 8); ctx.lineTo(8, 3); ctx.closePath(); ctx.fill();
+      // snout
+      ctx.fillStyle = '#3a2410';
+      ctx.fillRect(8, -2, 4, 4);
+      // eyes
+      ctx.fillStyle = '#ffce44';
+      ctx.beginPath(); ctx.arc(5, -2, 1, 0, Math.PI*2);
+      ctx.arc(5,  2, 1, 0, Math.PI*2); ctx.fill();
+      ctx.restore();
+      if (s.life < 4) {
+        ctx.strokeStyle = '#7a5030';
+        ctx.lineWidth = 1.5;
+        ctx.globalAlpha = 0.4;
+        ctx.beginPath(); ctx.arc(s.x, s.y, 14, 0, Math.PI*2); ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
+    } else if (s.kind === 'spider') {
+      const ang = Math.atan2(s.vy, s.vx);
+      const leg = Math.sin(gameTime * 40 + s.x * 0.3) * 1.5;
+      ctx.save();
+      ctx.translate(s.x, s.y);
+      ctx.rotate(ang);
+      // tiny black body
+      ctx.fillStyle = '#222';
+      ctx.beginPath(); ctx.arc(0, 0, 4, 0, Math.PI*2); ctx.fill();
+      ctx.strokeStyle = '#000';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      // 8 legs as tiny lines, oscillating
+      ctx.strokeStyle = '#5a3030';
+      ctx.lineWidth = 1;
+      for (let k = 0; k < 4; k++) {
+        const a = (k - 1.5) * 0.45;
+        const lx = Math.cos(a) * (5 + leg), ly = Math.sin(a) * (5 + leg);
+        ctx.beginPath();
+        ctx.moveTo(0, 0);  ctx.lineTo( lx,  ly);
+        ctx.moveTo(0, 0);  ctx.lineTo(-lx,  ly);
+        ctx.stroke();
+      }
+      // glowing red eyes
+      ctx.fillStyle = '#ff5050';
+      ctx.beginPath(); ctx.arc(2, -1, 0.8, 0, Math.PI*2);
+      ctx.arc(2, 1, 0.8, 0, Math.PI*2); ctx.fill();
+      ctx.restore();
+      if (s.life < 2) {
+        ctx.strokeStyle = '#5a3030';
+        ctx.lineWidth = 1;
+        ctx.globalAlpha = 0.4;
+        ctx.beginPath(); ctx.arc(s.x, s.y, 7, 0, Math.PI*2); ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
+    } else if (s.kind === 'spirit') {
+      // ethereal glowing orb with a wisp tail
+      const pulse = 1 + Math.sin(gameTime * 6 + s.x) * 0.15;
+      ctx.save();
+      // outer glow
+      const glow = ctx.createRadialGradient(s.x, s.y, 1, s.x, s.y, 16 * pulse);
+      glow.addColorStop(0, '#fff');
+      glow.addColorStop(0.4, '#9bf0ff');
+      glow.addColorStop(1, '#9bf0ff00');
+      ctx.fillStyle = glow;
+      ctx.beginPath(); ctx.arc(s.x, s.y, 16 * pulse, 0, Math.PI*2); ctx.fill();
+      // core
+      ctx.fillStyle = '#fff';
+      ctx.beginPath(); ctx.arc(s.x, s.y, 3.5, 0, Math.PI*2); ctx.fill();
+      // tail — points backward along velocity
+      const ang = Math.atan2(s.vy, s.vx);
+      ctx.strokeStyle = '#9bf0ff';
+      ctx.lineWidth = 2;
+      ctx.globalAlpha = 0.55;
+      ctx.beginPath();
+      ctx.moveTo(s.x, s.y);
+      ctx.lineTo(s.x - Math.cos(ang) * 12, s.y - Math.sin(ang) * 12);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+      ctx.restore();
+      if (s.life < 2.5) {
+        ctx.strokeStyle = '#9bf0ff';
+        ctx.lineWidth = 1.5;
+        ctx.globalAlpha = 0.4;
+        ctx.beginPath(); ctx.arc(s.x, s.y, 12, 0, Math.PI*2); ctx.stroke();
         ctx.globalAlpha = 1;
       }
     }
