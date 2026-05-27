@@ -4921,6 +4921,9 @@ function throwChakram(def, ang) {
     explosive: false, blastR: 0, blastDmg: 0,
     bulletKind: 'chakram',
     bounces: 0, leavesSlick: false, spawnChicks: 0,
+    // Re-hit the same zombie every 0.25s so the saw blade actually saws
+    // instead of one-shotting per pass. Same mechanic the Pizza Cutter uses.
+    clearHitsInterval: 0.25, clearHitsAt: 0,
     chakramTimer: 0, returning: false, outTime: def.outTime,
     isCrit,
   });
