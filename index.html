@@ -247,6 +247,15 @@ const SECONDARIES = {
              shots: 3, spread: 0.16, speed: 920, life: 0.7, pierce: 1 },
   chakram: { name: 'Chakram', kind: 'returning', cooldown: 1.20, damage: 24, color: '#ff8040', tag: 'C',
              speed: 620, life: 2.6, pierce: 99, outTime: 0.55 },
+  // Utility tools (still bound to RMB / Q)
+  medkit:  { name: 'Medkit',  kind: 'heal',      cooldown: 7.0, color: '#5cd86b', tag: '+',
+             heal: 45 },
+  dash:    { name: 'Dash',    kind: 'dash',      cooldown: 1.6, color: '#5cffec', tag: '»',
+             distance: 160, invuln: 0.5 },
+  decoy:   { name: 'Decoy',   kind: 'decoy',     cooldown: 5.0, color: '#ffce44', tag: 'd',
+             hp: 120, life: 9 },
+  emp:     { name: 'EMP',     kind: 'stun',      cooldown: 8.0, color: '#7ec8ff', tag: 'E',
+             radius: 220, duration: 3.0 },
 };
 const SECONDARY_KEYS = Object.keys(SECONDARIES);
 
@@ -263,6 +272,7 @@ const chests  = []; // boss-drop reward chests — { x, y }
 const floaters= []; // floating reward text — { x, y, text, life, color }
 const slashes = []; // katana swing arcs — { x, y, ang, life, max, range, arc, color }
 const sparks  = []; // tesla lightning links — { x1, y1, x2, y2, life, max }
+const decoys  = []; // decoy lures — { x, y, hp, hpMax, life }
 const decals  = []; // blood splats on the floor
 
 // Random pickup definitions. apply() runs when the player walks over one.
@@ -1407,6 +1417,102 @@ function useSecondary() {
   if (def.kind === 'melee')      swingMelee(def, ang);
   else if (def.kind === 'thrown') throwBlades(def, ang);
   else if (def.kind === 'returning') throwChakram(def, ang);
+  else if (def.kind === 'heal')   useHeal(def);
+  else if (def.kind === 'dash')   useDash(def, ang);
+  else if (def.kind === 'decoy')  useDecoy(def);
+  else if (def.kind === 'stun')   useStun(def);
+}
+
+// ----- Utility secondaries -----
+function useHeal(def) {
+  const before = player.hp;
+  player.hp = Math.min(player.maxHp, player.hp + def.heal);
+  const gained = player.hp - before;
+  if (gained > 0) {
+    floaters.push({ x: player.x, y: player.y - 22, text: `+${Math.ceil(gained)} HP`, life: 1.6, color: def.color });
+    for (let i = 0; i < 18; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const s = 60 + Math.random() * 120;
+      particles.push({ x: player.x, y: player.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s, life: 0.55, color: def.color });
+    }
+  }
+  SFX.pickup();
+}
+
+function useDash(def, ang) {
+  const oldX = player.x, oldY = player.y;
+  const tx = player.x + Math.cos(ang) * def.distance;
+  const ty = player.y + Math.sin(ang) * def.distance;
+  player.x = Math.max(player.r, Math.min(W - player.r, tx));
+  player.y = Math.max(player.r, Math.min(H - player.r, ty));
+  player.invuln = Math.max(player.invuln, def.invuln);
+  // afterimage trail
+  for (let k = 0; k < 10; k++) {
+    const t = k / 10;
+    particles.push({
+      x: oldX + (player.x - oldX) * t,
+      y: oldY + (player.y - oldY) * t,
+      vx: 0, vy: 0,
+      life: 0.32 - t * 0.22,
+      color: def.color,
+    });
+  }
+  SFX.swing();
+  shake(3);
+}
+
+function useDecoy(def) {
+  decoys.push({ x: player.x, y: player.y, hp: def.hp, hpMax: def.hp, life: def.life });
+  // spawn ring
+  for (let i = 0; i < 18; i++) {
+    const a = (i / 18) * Math.PI * 2;
+    particles.push({ x: player.x, y: player.y, vx: Math.cos(a) * 120, vy: Math.sin(a) * 120, life: 0.45, color: def.color });
+  }
+  SFX.crate();
+}
+
+function useStun(def) {
+  for (const z of zombies) {
+    const dx = z.x - player.x, dy = z.y - player.y;
+    if (dx*dx + dy*dy < def.radius * def.radius) {
+      z.slowTimer = Math.max(z.slowTimer || 0, def.duration);
+    }
+  }
+  // expanding ring particles
+  for (let i = 0; i < 56; i++) {
+    const a = (i / 56) * Math.PI * 2;
+    const s = 220 + Math.random() * 80;
+    particles.push({ x: player.x, y: player.y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 0.65, color: def.color });
+  }
+  shake(10);
+  SFX.unlock();
+}
+
+function nearestDecoy(z) {
+  let best = null, bd2 = 300 * 300; // zombies only notice decoys within ~300px
+  for (const d of decoys) {
+    if (d.hp <= 0) continue;
+    const dx = d.x - z.x, dy = d.y - z.y;
+    const d2 = dx*dx + dy*dy;
+    if (d2 < bd2) { bd2 = d2; best = d; }
+  }
+  return best;
+}
+
+function updateDecoys(dt) {
+  for (let i = decoys.length - 1; i >= 0; i--) {
+    const d = decoys[i];
+    d.life -= dt;
+    if (d.life <= 0 || d.hp <= 0) {
+      // poof
+      for (let k = 0; k < 20; k++) {
+        const a = Math.random() * Math.PI * 2;
+        const s = 80 + Math.random() * 160;
+        particles.push({ x: d.x, y: d.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s, life: 0.6, color: '#ffce44' });
+      }
+      decoys.splice(i, 1);
+    }
+  }
 }
 
 function swingMelee(def, ang) {
@@ -1742,7 +1848,11 @@ function zombieCanEnter(x, y, r) {
 function updateZombies(dt) {
   for (let i = zombies.length - 1; i >= 0; i--) {
     const z = zombies[i];
-    const dx = player.x - z.x, dy = player.y - z.y;
+    // Aggro toward the nearest decoy if there is one, else the player.
+    const lure = nearestDecoy(z);
+    const tx = lure ? lure.x : player.x;
+    const ty = lure ? lure.y : player.y;
+    const dx = tx - z.x, dy = ty - z.y;
     const d = Math.hypot(dx, dy) || 1;
     // banana slicks slow whoever's on top of them
     let speedMul = 1;
@@ -1771,14 +1881,18 @@ function updateZombies(dt) {
     }
 
     // contact damage to player + thorns retaliation
+    // dx/dy/d above point toward whatever the zombie is chasing (player or
+    // decoy). Recompute against the player specifically for damage.
+    const pdx = player.x - z.x, pdy = player.y - z.y;
+    const pd = Math.hypot(pdx, pdy) || 1;
     const rr = z.r + player.r;
-    const inContact = dx*dx + dy*dy < rr*rr;
+    const inContact = pdx*pdx + pdy*pdy < rr*rr;
     if (inContact && player.invuln <= 0 && !godMode) {
       if (player.buffs.shield > 0) {
         player.buffs.shield = 0;
-        const knock = 12 / d;
-        player.x -= dx * knock;
-        player.y -= dy * knock;
+        const knock = 12 / pd;
+        player.x -= pdx * knock;
+        player.y -= pdy * knock;
         player.invuln = 0.6;
         shake(8);
       } else {
@@ -1794,6 +1908,14 @@ function updateZombies(dt) {
         killZombie(z);
         zombies.splice(i, 1);
         continue;
+      }
+    }
+    // Decoy contact damage — zombies tear into the decoy when in range.
+    for (const dc of decoys) {
+      const ddx = dc.x - z.x, ddy = dc.y - z.y;
+      const drr = z.r + 14;
+      if (ddx*ddx + ddy*ddy < drr*drr) {
+        dc.hp -= z.damage * dt;
       }
     }
   }
@@ -2161,6 +2283,7 @@ function hardReset() {
   floaters.length = 0;
   slashes.length = 0;
   sparks.length = 0;
+  decoys.length = 0;
   decals.length = 0;
   shakeAmt = 0; flashRed = 0; nearbyGun = null;
   player.weapon = 'pistol';
@@ -2285,6 +2408,41 @@ function render() {
     ctx.beginPath(); ctx.arc(p.x, p.y, 2.5, 0, Math.PI*2); ctx.fill();
   }
   ctx.globalAlpha = 1;
+
+  // decoys — colored dummy figure with HP bar above
+  for (const dc of decoys) {
+    const pulse = 1 + Math.sin(gameTime * 6 + dc.x * 0.1) * 0.1;
+    // aura
+    const aura = ctx.createRadialGradient(dc.x, dc.y, 4, dc.x, dc.y, 30 * pulse);
+    aura.addColorStop(0, 'rgba(255, 206, 68, 0.5)');
+    aura.addColorStop(1, 'rgba(255, 206, 68, 0)');
+    ctx.fillStyle = aura;
+    ctx.beginPath(); ctx.arc(dc.x, dc.y, 30 * pulse, 0, Math.PI*2); ctx.fill();
+    // body
+    ctx.fillStyle = '#ffce44';
+    ctx.beginPath(); ctx.arc(dc.x, dc.y, 11, 0, Math.PI*2); ctx.fill();
+    ctx.strokeStyle = '#1a1a1a';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    // exclamation mark indicating "look at me"
+    ctx.fillStyle = '#1a1a1a';
+    ctx.fillRect(dc.x - 1.5, dc.y - 5, 3, 7);
+    ctx.fillRect(dc.x - 1.5, dc.y + 4, 3, 3);
+    // HP bar
+    if (dc.hp < dc.hpMax) {
+      ctx.fillStyle = '#222';
+      ctx.fillRect(dc.x - 14, dc.y - 22, 28, 4);
+      ctx.fillStyle = '#5cd86b';
+      ctx.fillRect(dc.x - 14, dc.y - 22, 28 * Math.max(0, dc.hp / dc.hpMax), 4);
+    }
+    // life timer ring (small gold tick at top)
+    const lifeT = dc.life / 9;
+    ctx.strokeStyle = '#a07e1c';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(dc.x, dc.y, 13, -Math.PI/2, -Math.PI/2 + Math.PI * 2 * lifeT);
+    ctx.stroke();
+  }
 
   // zombies
   for (const z of zombies) {
@@ -3363,6 +3521,7 @@ function tick() {
   updateFloaters(dt);
   updateSlashes(dt);
   updateSparks(dt);
+  updateDecoys(dt);
   updateParticles(dt);
   updateDecals(dt);
   updateWave(dt);
