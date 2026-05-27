@@ -597,17 +597,23 @@ const WEAPONS = {
   // in Arsenal. They only enter the world via the trader's shop tab and
   // disappear forever when the player swaps to a different weapon.
   fish:    { name: 'Fish Slap',        shots: 7, spread: 0.40, damage: 0.55, fireRate: 0.6, bulletSpeed: 0.75, pierce: 0, life: 0.45, color: '#9bc8e8', tag: 'F', traderOnly: true,
-             bulletKind: 'fish', desc: 'Slaps a wide cone of stinky fish' },
-  pizza:   { name: 'Pizza Cutter',     shots: 1, spread: 0.00, damage: 1.3, fireRate: 1.1, bulletSpeed: 1.1, pierce: 0, life: 2.2, color: '#e84030', tag: 'Z', traderOnly: true,
-             bulletKind: 'pizza', bounces: 6, desc: 'Wheel of pizza that bounces off zombies' },
+             bulletKind: 'fish', bulletKnock: 380, desc: 'Slaps a wide cone of stinky fish · big knockback' },
+  pizza:   { name: 'Pizza Cutter',     shots: 1, spread: 0.00, damage: 1.0, fireRate: 1.1, bulletSpeed: 1.1, pierce: 0, life: 2.2, color: '#e84030', tag: 'Z', traderOnly: true,
+             bulletKind: 'pizza', bounces: 6, clearHitsInterval: 0.22,
+             desc: 'Bouncing pizza saws through crowds · re-hits' },
   toaster: { name: 'Toaster Cannon',   shots: 1, spread: 0.06, damage: 1.6, fireRate: 0.75, bulletSpeed: 0.9, pierce: 0, life: 1.5, color: '#d8a060', tag: 'A', traderOnly: true,
-             explosive: true, blastR: 55, blastDmg: 18, bulletKind: 'toast', desc: 'Pops a slice of scalding toast at the target' },
+             explosive: true, blastR: 55, blastDmg: 18, bulletKind: 'toast', spawnToasts: 3,
+             desc: 'Scalding toast pops into 3 shrapnel slices' },
   confetti:{ name: 'Confetti Bomb',    shots: 10, spread: 0.55, damage: 0.35, fireRate: 0.65, bulletSpeed: 1.0, pierce: 0, life: 1.0, color: '#ff80c0', tag: 'O', traderOnly: true,
-             bulletKind: 'confetti', desc: 'Sprays a rainbow burst of streamers' },
+             bulletKind: 'confetti', randomEffect: true,
+             desc: 'Streamers · each carries a random status effect' },
   mower:   { name: 'Lawnmower',        shots: 3, spread: 0.30, damage: 0.5, fireRate: 7.5, bulletSpeed: 0.55, pierce: 0, life: 0.3, color: '#5cd86b', tag: 'M', traderOnly: true,
-             bulletKind: 'mower', desc: 'Mows a stream of grass shards in front of you' },
+             bulletKind: 'mower', dropsHazard: 'grass',
+             desc: 'Grass shards leave a damaging clipping field' },
   noodle:  { name: 'Spaghetti Launcher', shots: 1, spread: 0.0, damage: 1.0, fireRate: 0.85, bulletSpeed: 0.95, pierce: 3, life: 1.6, color: '#ffd166', tag: 'N', traderOnly: true,
-             bulletKind: 'noodle', leavesSlick: true, desc: 'Piercing noodles that leave a sticky slick' },
+             bulletKind: 'noodle', leavesSlick: true,
+             effect: 'poison', effectDur: 4, effectDps: 9,
+             desc: 'Piercing noodles · sticky tomato poison DoT' },
 };
 // Trader stock — id + cost. Prices are deliberately higher than Arsenal
 // because these weapons are exclusive and the trader only visits sometimes.
@@ -744,6 +750,7 @@ const pets = [];      // permanent immortal pet companions — { id, x, y, vx, v
 const ownedPets = new Set(); // tracks which pet types are already owned (buy-once)
 const zombieBullets = []; // projectiles fired by zombies (spitter) — { x, y, vx, vy, r, dmg, life, color }
 const healPulses = [];  // expanding green rings drawn when a healer pulses — { x, y, r, max, life, maxLife }
+const hazards = [];     // lingering damage zones (Lawnmower clippings) — { x, y, r, life, max, dps, kind }
 // One random "arena event" per wave — fires at a random time mid-wave.
 // `pending` is the scheduled type; once fired it moves into `active` (so its
 // visual side-effect can persist for a few seconds).
@@ -1936,10 +1943,16 @@ function drawBullet(b) {
     return;
   }
   if (b.bulletKind === 'confetti') {
-    // tiny streamer — color cycles through a rainbow per bullet so each shot
-    // in the burst looks different
-    const colors = ['#ff5050', '#ffce44', '#5cd86b', '#7ec8ff', '#c47eff', '#ff80c0'];
-    const c0 = colors[(Math.floor((b.phase || 0) + b.x * 0.07) % colors.length + colors.length) % colors.length];
+    // Streamer color encodes the bullet's status effect so the player can
+    // read what each shot will inflict on hit.
+    const tints = {
+      burn:      '#ff5050',
+      slow:      '#7ec8ff',
+      stun:      '#ffce44',
+      knockback: '#ff80c0',
+      poison:    '#5cd86b',
+    };
+    const c0 = tints[b.effect] || '#c47eff';
     const ang = Math.atan2(b.vy, b.vx) + Math.sin(gameTime * 12 + b.y * 0.2) * 0.5;
     ctx.save();
     ctx.translate(b.x, b.y);
@@ -3414,8 +3427,25 @@ function tryShoot(nowSec) {
       // Homing Bullets ability applies while its timer is active
       homing: homingBulletsTimer > 0 && !isOrbit,
       isCrit,
+      // Trader-weapon hooks — passed through so the bullet carries its own
+      // on-hit behavior. Each is null/0 for vanilla weapons.
+      bulletKnock: w.bulletKnock || 0,
+      clearHitsInterval: w.clearHitsInterval || 0,
+      clearHitsAt: 0,
+      spawnToasts: w.spawnToasts || 0,
+      dropsHazard: w.dropsHazard || null,
+      effect: w.randomEffect ? randomConfettiEffect() : (w.effect || null),
+      effectDur: w.effectDur || 0,
+      effectDps: w.effectDps || 0,
     });
   }
+}
+
+// Confetti picks a random elemental effect per shot. The color/effect is also
+// baked into the bullet so drawBullet can tint accordingly.
+function randomConfettiEffect() {
+  const choices = ['burn', 'slow', 'stun', 'knockback', 'poison'];
+  return choices[Math.floor(Math.random() * choices.length)];
 }
 
 // ---------- Secondary weapons ----------
@@ -4664,6 +4694,32 @@ function updateZombies(dt) {
       z.slowTimer -= dt;
       speedMul = Math.min(speedMul, 0.45);
     }
+    // Confetti / Lawnmower stun — pauses the zombie entirely
+    if (z.stunTimer && z.stunTimer > 0) {
+      z.stunTimer -= dt;
+      speedMul = 0;
+    }
+    // Burn (Confetti) / poison (Spaghetti) ticks — DoT applied each frame.
+    if (z.burnTimer && z.burnTimer > 0) {
+      z.burnTimer -= dt;
+      z.hp -= (z.burnDps || 0) * dt;
+      if (Math.random() < dt * 8) {
+        particles.push({ x: z.x + (Math.random()-0.5)*8, y: z.y - 6, vx: 0, vy: -40, life: 0.3, color: '#ff8030' });
+      }
+    }
+    if (z.poisonTimer && z.poisonTimer > 0) {
+      z.poisonTimer -= dt;
+      z.hp -= (z.poisonDps || 0) * dt;
+      if (Math.random() < dt * 6) {
+        particles.push({ x: z.x + (Math.random()-0.5)*8, y: z.y - 6, vx: 0, vy: -30, life: 0.4, color: '#d63030' });
+      }
+    }
+    // Either DoT can kill the zombie — splice + drop if so.
+    if ((z.burnTimer > 0 || z.poisonTimer > 0) && z.hp <= 0) {
+      killZombie(z);
+      zombies.splice(i, 1);
+      continue;
+    }
     // Bullet Time ability — global slow until the timer expires
     if (bulletTimeTimer > 0) speedMul = Math.min(speedMul, 0.30);
     const effSpeed = z.speed * speedMul;
@@ -4867,6 +4923,37 @@ function modifyZombieDamage(z, dmg, hitX, hitY) {
   return dmg;
 }
 
+// Apply a per-bullet on-hit status effect. The bullet carries `effect` and
+// optional `effectDur` / `effectDps`; this routes to the right zombie field.
+function applyBulletStatus(b, z) {
+  if (!b.effect || z.isBoss) return;
+  const dur = b.effectDur || 3;
+  switch (b.effect) {
+    case 'burn':
+      z.burnTimer = Math.max(z.burnTimer || 0, dur);
+      z.burnDps = Math.max(z.burnDps || 0, b.effectDps || 6);
+      break;
+    case 'poison':
+      z.poisonTimer = Math.max(z.poisonTimer || 0, dur);
+      z.poisonDps = Math.max(z.poisonDps || 0, b.effectDps || 8);
+      break;
+    case 'slow':
+      z.slowTimer = Math.max(z.slowTimer || 0, dur);
+      break;
+    case 'stun':
+      z.stunTimer = Math.max(z.stunTimer || 0, Math.min(dur, 1.2));
+      break;
+    case 'knockback': {
+      const kdx = z.x - player.x, kdy = z.y - player.y;
+      const klen = Math.hypot(kdx, kdy) || 1;
+      const push = 480;
+      z.knockVx = (z.knockVx || 0) + (kdx / klen) * push;
+      z.knockVy = (z.knockVy || 0) + (kdy / klen) * push;
+      break;
+    }
+  }
+}
+
 function updateZombieBullets(dt) {
   for (let i = zombieBullets.length - 1; i >= 0; i--) {
     const b = zombieBullets[i];
@@ -4987,10 +5074,23 @@ function updateBullets(dt) {
       b.y += b.vy * dt;
     }
     b.life -= dt;
+    // Pizza Cutter: periodically clear its hit set so the saw can re-damage
+    // the same zombie if it stays in contact while the wheel spins/bounces.
+    if (b.clearHitsInterval) {
+      b.clearHitsAt = (b.clearHitsAt || 0) - dt;
+      if (b.clearHitsAt <= 0) {
+        b.hits.clear();
+        b.clearHitsAt = b.clearHitsInterval;
+      }
+    }
     if (b.life <= 0 || (b.bulletKind !== 'orbit' && (b.x < -20 || b.x > W + 20 || b.y < -20 || b.y > H + 20))) {
-      // banana drops a slick where it dies
+      // banana / noodle drop a slick where they die
       if (b.leavesSlick && b.x > 0 && b.x < W && b.y > 0 && b.y < H) {
         addSlick(b.x, b.y, b.bulletKind === 'noodle' ? 'noodle' : 'banana');
+      }
+      // Lawnmower leaves a damaging grass-clipping field on expiry
+      if (b.dropsHazard === 'grass' && b.x > 0 && b.x < W && b.y > 0 && b.y < H) {
+        spawnHazard(b.x, b.y, 'grass');
       }
       bullets.splice(i, 1);
       continue;
@@ -5012,6 +5112,8 @@ function updateBullets(dt) {
           const hitY = t == null ? b.y : prevY + (b.y - prevY) * t;
           explode(hitX, hitY, b.blastR, b.damage + b.blastDmg);
           if (b.spawnChicks > 0) spawnChicks(hitX, hitY, b.spawnChicks, b.damage * 0.5);
+          // Toaster Cannon: pop out small toast shrapnel in random directions.
+          if (b.spawnToasts > 0) spawnToastShrapnel(hitX, hitY, b.spawnToasts, b.damage * 0.45);
           consumed = true;
           break;
         }
@@ -5024,6 +5126,18 @@ function updateBullets(dt) {
         z.hp -= dmgApplied;
         b.hits.add(z);
         SFX.zombieHit();
+        // ---- Trader-weapon on-hit effects (data-driven via bullet flags) ----
+        // Fish Slap: huge knockback per pellet — launches zombies away from
+        // the player. Bosses resist as usual.
+        if (b.bulletKnock) {
+          const kdx = z.x - player.x, kdy = z.y - player.y;
+          const klen = Math.hypot(kdx, kdy) || 1;
+          const push = (z.isBoss ? b.bulletKnock * 0.2 : b.bulletKnock);
+          z.knockVx = (z.knockVx || 0) + (kdx / klen) * push;
+          z.knockVy = (z.knockVy || 0) + (kdy / klen) * push;
+        }
+        // Confetti / Spaghetti: per-bullet status effect from b.effect.
+        applyBulletStatus(b, z);
         // Trainer dummy shows a damage floater so you can read the numbers
         if (z.isDummy) {
           floaters.push({
@@ -5120,6 +5234,62 @@ function spawnChicks(x, y, n, dmg) {
     const a = Math.random() * Math.PI * 2;
     const sp = 60 + Math.random() * 200;
     particles.push({ x, y, vx: Math.cos(a)*sp, vy: Math.sin(a)*sp, life: 0.7 + Math.random()*0.4, color: i % 2 ? '#fff5b8' : '#ffe066' });
+  }
+}
+
+// Toaster Cannon: spawn small toast shrapnel from the explosion site. Each
+// piece is a short-lived bullet that flies in a random direction.
+function spawnToastShrapnel(x, y, n, dmg) {
+  for (let i = 0; i < n; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const sp = 280 + Math.random() * 140;
+    bullets.push({
+      x, y,
+      vx: Math.cos(a) * sp,
+      vy: Math.sin(a) * sp,
+      damage: Math.max(3, dmg),
+      pierce: 0,
+      hits: new Set(),
+      life: 0.7,
+      color: '#d8a060',
+      explosive: false, blastR: 0, blastDmg: 0,
+      bulletKind: 'toast',
+      homing: false, bounces: 0, leavesSlick: false, spawnChicks: 0, spawnToasts: 0,
+      chains: 0, chainRange: 0, orbitAngle: 0, orbitRadius: 0, orbitSpeed: 0,
+      isCrit: false, bulletKnock: 0, clearHitsInterval: 0, clearHitsAt: 0,
+      dropsHazard: null, effect: null, effectDur: 0, effectDps: 0,
+    });
+  }
+  for (let i = 0; i < 12; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const sp = 60 + Math.random() * 160;
+    particles.push({ x, y, vx: Math.cos(a)*sp, vy: Math.sin(a)*sp, life: 0.5, color: i % 2 ? '#d8a060' : '#ffe89a' });
+  }
+}
+
+// Lawnmower hazard / future damage-zone helper. Spawns a lingering disc that
+// damages any zombie standing on it.
+function spawnHazard(x, y, kind) {
+  if (kind === 'grass') {
+    hazards.push({ x, y, r: 28, life: 3.0, max: 3.0, dps: 18, kind: 'grass' });
+  }
+}
+
+function updateHazards(dt) {
+  for (let i = hazards.length - 1; i >= 0; i--) {
+    const h = hazards[i];
+    h.life -= dt;
+    if (h.life <= 0) { hazards.splice(i, 1); continue; }
+    // Tick damage on zombies standing on the hazard
+    for (let j = zombies.length - 1; j >= 0; j--) {
+      const z = zombies[j];
+      if (z.isBoss || z.isDummy) continue;
+      const dx = z.x - h.x, dy = z.y - h.y;
+      if (dx * dx + dy * dy < h.r * h.r) {
+        z.hp -= h.dps * dt;
+        if (z.hp <= 0) { killZombie(z); zombies.splice(j, 1); }
+      }
+    }
   }
 }
 
@@ -5346,6 +5516,7 @@ function hardReset() {
   ownedPets.clear();
   zombieBullets.length = 0;
   healPulses.length = 0;
+  hazards.length = 0;
   pendingEvent = null;
   activeEvent = null;
   trader = null;
@@ -5464,6 +5635,28 @@ function render() {
       ctx.fillRect(s.r * 0.55, -3, 4, 3);
     }
     ctx.restore();
+    ctx.globalAlpha = 1;
+  }
+
+  // Damaging hazards (Lawnmower grass clippings) — drawn above the slicks
+  // but below the shop zone / zombies. Pulsing alpha keeps them readable
+  // without dominating the field.
+  for (const h of hazards) {
+    const a = Math.max(0, Math.min(1, h.life / h.max));
+    const pulse = 0.6 + 0.4 * Math.sin(gameTime * 8 + h.x * 0.05);
+    ctx.globalAlpha = a * 0.6;
+    // soft inner fill
+    ctx.fillStyle = '#3a8a4a';
+    ctx.beginPath(); ctx.arc(h.x, h.y, h.r, 0, Math.PI*2); ctx.fill();
+    // grass clipping flecks
+    ctx.fillStyle = '#5cd86b';
+    for (let k = 0; k < 7; k++) {
+      const ang = (k / 7) * Math.PI * 2 + h.x * 0.01;
+      const rr = h.r * (0.4 + ((k * 17) % 50) / 100);
+      ctx.beginPath();
+      ctx.arc(h.x + Math.cos(ang) * rr, h.y + Math.sin(ang) * rr, 2 * pulse, 0, Math.PI*2);
+      ctx.fill();
+    }
     ctx.globalAlpha = 1;
   }
 
@@ -6919,6 +7112,31 @@ const TUTORIAL_PAGES = [
         'Horde Push — sudden burst of 6 zombies from one edge',
         'Blackout — vision shrinks to a circle around you (10s)',
         'Heal Zone — temporary healing pad spawns somewhere',
+      ] },
+    ],
+  },
+  {
+    title: 'Trader Weapons',
+    accent: '#c47eff',
+    sections: [
+      { heading: 'The Trader', lines: [
+        'A traveling trader visits the shop sometimes',
+        'Stays for 3 waves — see the wave counter on their tab',
+        'Sells 6 gag weapons sold NOWHERE else',
+        'Trader weapons vanish on swap · can\'t be re-collected',
+      ] },
+      { heading: 'Unique Mechanics', lines: [
+        'Fish Slap — big KNOCKBACK · launches zombies away',
+        'Pizza Cutter — re-hits the same zombie · saws crowds',
+        'Toaster Cannon — explosion spits 3 toast shrapnel',
+        'Confetti Bomb — each streamer = random status effect',
+        'Lawnmower — leaves a damaging clipping field on the ground',
+        'Spaghetti Launcher — pierces · sticky tomato POISON',
+      ] },
+      { heading: 'Confetti Color Key', lines: [
+        'Red = burn (damage over time)',
+        'Blue = slow · Yellow = stun · Green = poison',
+        'Pink = knockback',
       ] },
     ],
   },
@@ -9201,6 +9419,7 @@ function tick() {
     updateZombieBullets(dt);
     updateHealPulses(dt);
     updateHealFields(dt);
+    updateHazards(dt);
     updateArenaEvent(dt);
     updateAbilityBooks(dt);
     updateParticles(dt);
