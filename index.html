@@ -1564,6 +1564,83 @@ const skipBtn = { x: W / 2 - 80, y: H / 2 - 28, w: 160, h: 40 };
 function pointInRect(p, r) { return p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h; }
 
 // Draw a weapon at the local origin, pointing along +x. Caller handles transform.
+// Charged Bow held visual. Drawn in the player's facing-rotated frame so
+// +X is "forward toward the cursor". `t` is the current charge (0..1).
+//   - At t=0 the string is straight (relaxed) and no arrow is shown.
+//   - As t increases the string bends back and an arrow nocks/extends.
+//   - Limbs flex slightly forward at full draw for a "loaded" feel.
+function drawBow(r, t) {
+  const x0 = r * 0.55;                        // forward offset from player center
+  const top = -r * 0.95;
+  const bot =  r * 0.95;
+  const bulge = x0 + r * 0.35 + t * r * 0.10; // bow limbs bow forward more at draw
+  // Outer wood limbs
+  ctx.lineCap = 'round';
+  ctx.strokeStyle = '#5a3a1f';
+  ctx.lineWidth = 3.5;
+  ctx.beginPath();
+  ctx.moveTo(x0, top);
+  ctx.quadraticCurveTo(bulge, -r * 0.3, bulge, 0);
+  ctx.quadraticCurveTo(bulge, r * 0.3, x0, bot);
+  ctx.stroke();
+  // Inner wood highlight (lighter brown)
+  ctx.strokeStyle = '#8a5d36';
+  ctx.lineWidth = 1.4;
+  ctx.beginPath();
+  ctx.moveTo(x0 + 1, top + 1);
+  ctx.quadraticCurveTo(bulge - 1.5, -r * 0.3, bulge - 1.5, 0);
+  ctx.quadraticCurveTo(bulge - 1.5, r * 0.3, x0 + 1, bot - 1);
+  ctx.stroke();
+  // Hand grip wrap at the middle
+  ctx.strokeStyle = '#2a1810';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(x0 + 2, -r * 0.22);
+  ctx.lineTo(x0 + 2,  r * 0.22);
+  ctx.stroke();
+  ctx.lineCap = 'butt';
+  // String — straight when relaxed, V-shape pulled back toward the player as t→1
+  const pullX = x0 - t * (r * 0.95);
+  ctx.strokeStyle = '#dfe2e8';
+  ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  ctx.moveTo(x0, top);
+  ctx.lineTo(pullX, 0);
+  ctx.lineTo(x0, bot);
+  ctx.stroke();
+  // Nocked arrow — only while drawn
+  if (t > 0) {
+    const arrowEnd = x0 + r * 0.55 + t * r * 0.35;
+    const arrowStart = pullX - 3;
+    // shaft
+    ctx.strokeStyle = '#c8b896';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(arrowStart, 0);
+    ctx.lineTo(arrowEnd - 3, 0);
+    ctx.stroke();
+    // arrowhead
+    ctx.fillStyle = '#1a1a1a';
+    ctx.beginPath();
+    ctx.moveTo(arrowEnd, 0);
+    ctx.lineTo(arrowEnd - 5, -2.6);
+    ctx.lineTo(arrowEnd - 5,  2.6);
+    ctx.closePath(); ctx.fill();
+    // fletching — color brightens at full draw to mirror the arrow bullet
+    ctx.fillStyle = t > 0.85 ? '#ffce44' : '#a8c5d8';
+    ctx.beginPath();
+    ctx.moveTo(arrowStart, -2.6);
+    ctx.lineTo(arrowStart + 4, 0);
+    ctx.lineTo(arrowStart,  2.6);
+    ctx.closePath(); ctx.fill();
+    // Small glow at the tip on a fully-charged arrow
+    if (t > 0.9) {
+      ctx.fillStyle = 'rgba(255, 209, 102, 0.55)';
+      ctx.beginPath(); ctx.arc(arrowEnd, 0, 3.5, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+}
+
 function drawGun(weapon, r) {
   const w = WEAPONS[weapon] || WEAPONS.pistol;
   // Custom-sprite override — if the user painted a gun in the sprite editor,
@@ -7008,6 +7085,18 @@ function render() {
     ctx.rotate(facing);
     drawGun(player.weapon, player.r);
     ctx.restore();
+
+    // Bow held alongside when the secondary is the Charged Bow. String bends
+    // back and an arrow nocks itself as the player draws.
+    if (player.secondary === 'bow') {
+      ctx.save();
+      ctx.translate(player.x, player.y);
+      ctx.rotate(facing);
+      const bdef = SECONDARIES.bow;
+      const t = player.bowHeld ? Math.max(0, Math.min(1, player.bowCharge / bdef.chargeTime)) : 0;
+      drawBow(player.r, t);
+      ctx.restore();
+    }
 
   }
 
