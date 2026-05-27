@@ -3306,14 +3306,18 @@ function swingMelee(def, ang) {
     if (player.special.slow) {
       z.slowTimer = Math.max(z.slowTimer || 0, player.special.slow);
     }
-    // Knockback — push the zombie away from the player by knockback pixels,
-    // clamped to canvas bounds. Bosses resist by default (only 25% push).
+    // Knockback — stamp a launch velocity instead of teleporting. The
+    // velocity decays exponentially in updateZombies so the zombie flies
+    // back along an arc that gradually fades. Bosses resist (25% push).
     if (def.knockback) {
       const push = z.isBoss ? def.knockback * 0.25 : def.knockback;
       const knx = (z.x - player.x) / d;
       const kny = (z.y - player.y) / d;
-      z.x = Math.max(z.r, Math.min(W - z.r, z.x + knx * push));
-      z.y = Math.max(z.r, Math.min(H - z.r, z.y + kny * push));
+      // Velocity factor chosen so total launch distance ~= def.knockback
+      // with the ~0.01/sec decay applied in updateZombies.
+      const KNOCK_VEL_FACTOR = 5;
+      z.knockVx = (z.knockVx || 0) + knx * push * KNOCK_VEL_FACTOR;
+      z.knockVy = (z.knockVy || 0) + kny * push * KNOCK_VEL_FACTOR;
     }
     if (z.hp <= 0) {
       killZombie(z);
@@ -3672,10 +3676,26 @@ function updateZombies(dt) {
     // Bullet Time ability — global slow until the timer expires
     if (bulletTimeTimer > 0) speedMul = Math.min(speedMul, 0.30);
     const effSpeed = z.speed * speedMul;
-    const nx = z.x + (dx / d) * effSpeed * dt;
-    const ny = z.y + (dy / d) * effSpeed * dt;
+    let vx = (dx / d) * effSpeed;
+    let vy = (dy / d) * effSpeed;
+    // Knockback velocity (stamped by melee hits) decays exponentially over
+    // real time; while non-zero it dominates the chase velocity, launching
+    // the zombie back in an arc.
+    if (z.knockVx || z.knockVy) {
+      vx += z.knockVx || 0;
+      vy += z.knockVy || 0;
+      // ~0.01 of velocity remains after 1 second (~99% decay/sec)
+      const friction = Math.pow(0.01, dt);
+      if (z.knockVx) z.knockVx = Math.abs(z.knockVx * friction) < 5 ? 0 : z.knockVx * friction;
+      if (z.knockVy) z.knockVy = Math.abs(z.knockVy * friction) < 5 ? 0 : z.knockVy * friction;
+    }
+    const nx = z.x + vx * dt;
+    const ny = z.y + vy * dt;
     if (zombieCanEnter(nx, z.y, z.r)) z.x = nx;
     if (zombieCanEnter(z.x, ny, z.r)) z.y = ny;
+    // Soft clamp so launched zombies don't fly fully off-screen forever.
+    z.x = Math.max(-z.r, Math.min(W + z.r, z.x));
+    z.y = Math.max(-z.r, Math.min(H + z.r, z.y));
 
     // boss periodically summons minions
     if (z.isBoss) {
