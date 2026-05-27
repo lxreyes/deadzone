@@ -3103,6 +3103,20 @@ function retrieveFromStorage(idx) {
 // ---------- Game logic ----------
 function shake(amt) { shakeAmt = Math.max(shakeAmt, amt); }
 
+// Shows a floating damage number above a hit zombie when that zombie is the
+// trainer dummy. Called from every damage application site so secondaries
+// (melee, AoE, pets, hazards) get the same numeric readout primaries do.
+function pushDamageFloater(z, dmg, isCrit) {
+  if (!z || !z.isDummy || dmg <= 0) return;
+  floaters.push({
+    x: z.x + (Math.random() - 0.5) * 16,
+    y: z.y - 14,
+    text: (isCrit ? 'CRIT ' : '') + Math.round(dmg).toString(),
+    life: 0.8,
+    color: isCrit ? '#fff5a8' : '#dfe2e8',
+  });
+}
+
 function addBlood(x, y, scale = 1) {
   decals.push({ x, y, r: 8 * scale + Math.random()*3, color: 'rgba(115, 18, 18, 0.55)', life: 14, max: 14 });
   for (let i = 0; i < 4; i++) {
@@ -4192,6 +4206,7 @@ function updatePets(dt) {
         const d = Math.hypot(dx, dy);
         if (d < (def.hitR || 12) + near.r) {
           near.hp -= def.dmg;
+          pushDamageFloater(near, def.dmg, false);
           p.lastAttack = 0;
           // light particle burst on hit
           for (let k = 0; k < 4; k++) {
@@ -4822,6 +4837,7 @@ function swingMelee(def, ang) {
     const actualDmg = modifyZombieDamage(z, dmg * bossMul, player.x, player.y);
     const dealt = Math.min(actualDmg, z.hp);
     z.hp -= actualDmg;
+    pushDamageFloater(z, actualDmg, isCrit);
     if (player.special.lifesteal) {
       player.hp = Math.min(player.maxHp, player.hp + dealt * player.special.lifesteal);
     }
@@ -4971,6 +4987,7 @@ function explode(x, y, radius, dmg) {
     if (dx*dx + dy*dy < radius * radius) {
       const dmgDealt = Math.min(dmg, z.hp);
       z.hp -= dmg;
+      pushDamageFloater(z, dmg, false);
       if (player.special.lifesteal) {
         player.hp = Math.min(player.maxHp, player.hp + dmgDealt * player.special.lifesteal);
       }
@@ -5689,15 +5706,7 @@ function updateBullets(dt) {
         // Confetti / Spaghetti: per-bullet status effect from b.effect.
         applyBulletStatus(b, z);
         // Trainer dummy shows a damage floater so you can read the numbers
-        if (z.isDummy) {
-          floaters.push({
-            x: z.x + (Math.random() - 0.5) * 16,
-            y: z.y - 14,
-            text: (b.isCrit ? 'CRIT ' : '') + Math.round(b.damage).toString(),
-            life: 0.8,
-            color: b.isCrit ? '#fff5a8' : '#dfe2e8',
-          });
-        }
+        pushDamageFloater(z, dmgApplied, b.isCrit);
         // Tesla: chain to nearby zombies after the direct hit.
         if (b.bulletKind === 'lightning' && b.chains > 0) {
           chainLightning(z, b.damage, b.chains, b.chainRange);
