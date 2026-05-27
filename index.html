@@ -597,6 +597,8 @@ const DROPPABLE_WEAPONS = ['shotgun', 'smg', 'rifle', 'rocket', 'chicken', 'bana
 const SECONDARIES = {
   katana:  { name: 'Katana',  kind: 'melee',     cooldown: 0.45, damage: 50, color: '#e8edf4', tag: 'K',
              range: 80, arc: Math.PI * 0.65, knockback: 90 },
+  warhammer:{ name: 'Warhammer', kind: 'melee', cooldown: 0.95, damage: 38, color: '#9aa0ab', tag: 'W',
+             range: 70, arc: Math.PI * 0.55, knockback: 380 },
   kunai:   { name: 'Kunai',   kind: 'thrown',    cooldown: 0.30, damage: 16, color: '#8aa0b4', tag: 'k',
              shots: 3, spread: 0.16, speed: 920, life: 0.7, pierce: 1 },
   chakram: { name: 'Chakram', kind: 'returning', cooldown: 1.20, damage: 24, color: '#ff8040', tag: 'C',
@@ -617,9 +619,9 @@ const SECONDARIES = {
   // Drop a glowing pad that regenerates HP while you stand on it.
   healingField: { name: 'Healing Field', kind: 'field', cooldown: 14.0, color: '#5cd86b', tag: 'H',
                   radius: 50, life: 8, hps: 12 },
-  // Place a proximity mine that detonates when a zombie strays close.
-  mine:    { name: 'Mine Layer', kind: 'mine', cooldown: 4.0, color: '#d33', tag: 'm',
-             triggerR: 60, blastR: 100, damage: 30, blastDmg: 50, life: 30 },
+  // Lob an explosive bomb in the aim direction; explodes on contact / expiry.
+  bomb:    { name: 'Bomb Launcher', kind: 'launcher', cooldown: 2.4, color: '#d33', tag: 'B',
+             damage: 22, speed: 620, life: 1.3, blastR: 90, blastDmg: 28 },
   // Briefly slow every active zombie — defensive panic button.
   slowtime: { name: 'Time Slow', kind: 'slowtime', cooldown: 12.0, color: '#c47eff', tag: 't',
               duration: 4.0 },
@@ -644,7 +646,6 @@ const bladeCrates = []; // pickups that swap player.secondary — { x, y, second
 const buildings = []; // placed buildings — { type, x, y, hp, hpMax, ... }
 const summons = [];   // friendly summoned units — { kind, x, y, vx, vy, hp, life, dmg }
 const healFields = [];// dropped healing pads — { x, y, r, life, max, hps }
-const mines = [];     // proximity mines — { x, y, life, triggerR, damage, blastR, blastDmg, armed }
 const decals  = []; // blood splats on the floor
 
 // Building catalog. Buildings snap to the 40px floor grid; w/h govern both
@@ -826,70 +827,100 @@ const ABILITIES = {
 const ABILITY_KEYS = Object.keys(ABILITIES);
 let bulletTimeTimer = 0;     // zombie-speed global slow
 let homingBulletsTimer = 0;  // new bullets spawn with homing while >0
+let selectedAbility = 0;     // index into ABILITY_KEYS for the cycled active slot
+const abilityBooks = [];     // boss-drop pickups — { x, y, abilityId, life }
 let treeView = 'tomes';      // 'tomes' (the shop) or 'roots' (the root system)
 
-// ---------- The Tree Of Upgrade — a separate EXP tree shaped like a real tree ----------
-// Central 'Awaken' root with four cardinal branches (3 tiers each) plus four
-// diagonal sub-branches that only require Awaken. 17 nodes total. Children
-// require their parent. Lines are drawn as curved roots for organic feel.
-const ROOT_TREE = [
-  { id: 'root',   name: 'Awaken',         desc: '+20 Max HP',                cost: 0,
-    parent: null,  x: 0, y: 0,    color: '#ffd166',
-    apply() { player.maxHp += 20; player.hp = Math.min(player.maxHp, player.hp + 20); } },
-  // North — defense
-  { id: 'n1',     name: 'Resilient',      desc: '+1 HP / second',            cost: 25,
-    parent: 'root', x: 0, y: -80,  color: '#5cd86b',
-    apply() { player.special.regen = (player.special.regen || 0) + 1; } },
-  { id: 'n2',     name: 'Bulwark',        desc: '+100 Max HP',               cost: 70,
-    parent: 'n1',   x: 0, y: -155, color: '#5cd86b',
-    apply() { player.maxHp += 100; player.hp = Math.min(player.maxHp, player.hp + 100); } },
-  { id: 'n3',     name: 'Iron Body',      desc: '+15% damage reduction',     cost: 140,
-    parent: 'n2',   x: 0, y: -230, color: '#5cd86b',
-    apply() { player.special.ironSkin = Math.min(0.5, (player.special.ironSkin || 0) + 0.15); } },
-  // East — offense
-  { id: 'e1',     name: 'Sharp Eye',      desc: '+10% crit chance',          cost: 25,
-    parent: 'root', x: 80,  y: 0,  color: '#ff5050',
-    apply() { player.special.crit = (player.special.crit || 0) + 0.1; } },
-  { id: 'e2',     name: 'Marksman',       desc: '+1 pierce',                 cost: 70,
-    parent: 'e1',   x: 160, y: 0,  color: '#ff5050',
-    apply() { player.pierce += 1; } },
-  { id: 'e3',     name: 'Devastator',     desc: '+25% bullet damage',        cost: 140,
-    parent: 'e2',   x: 240, y: 0,  color: '#ff5050',
-    apply() { player.special.heavyCal = (player.special.heavyCal || 0) + 0.25; } },
-  // South — mobility
-  { id: 's1',     name: 'Wind Step',      desc: '+30 move speed',            cost: 25,
-    parent: 'root', x: 0, y: 80,   color: '#5cffec',
-    apply() { player.speed += 30; } },
-  { id: 's2',     name: 'Flit',           desc: '-25% dash cooldown',        cost: 70,
-    parent: 's1',   x: 0, y: 155,  color: '#5cffec',
-    apply() { player.special.quickstep = Math.min(0.7, (player.special.quickstep || 0) + 0.25); } },
-  { id: 's3',     name: 'Cyclone',        desc: '+50 move speed',            cost: 140,
-    parent: 's2',   x: 0, y: 230,  color: '#5cffec',
-    apply() { player.speed += 50; } },
-  // West — economy
-  { id: 'w1',     name: 'Greedy Roots',   desc: '+20% money on kill',        cost: 25,
-    parent: 'root', x: -80,  y: 0, color: '#ffce44',
-    apply() { player.special.greed = (player.special.greed || 0) + 0.2; } },
-  { id: 'w2',     name: 'Hoarder',        desc: '+50% coin pickup range',    cost: 70,
-    parent: 'w1',   x: -160, y: 0, color: '#ffce44',
-    apply() { player.special.magnet = (player.special.magnet || 0) + 0.5; } },
-  { id: 'w3',     name: 'Tycoon',         desc: '+5% bonus coin drop',       cost: 140,
-    parent: 'w2',   x: -240, y: 0, color: '#ffce44',
-    apply() { player.special.luckyFind = Math.min(1, (player.special.luckyFind || 0) + 0.05); } },
-  // Diagonal hybrid nodes — each requires only the root
-  { id: 'ne',     name: 'Sage Wisdom',    desc: 'Crits hit 2.5x instead of 2x', cost: 90,
-    parent: 'root', x: 100,  y: -100, color: '#c47eff',
-    apply() { player.special.critBurst = (player.special.critBurst || 0) + 0.5; } },
-  { id: 'nw',     name: 'Iron Will',      desc: '+5 HP per zombie kill',     cost: 90,
-    parent: 'root', x: -100, y: -100, color: '#88aadd',
-    apply() { player.special.vampire = (player.special.vampire || 0) + 5; } },
-  { id: 'se',     name: 'Heatwave',       desc: '+30% explosion radius',     cost: 90,
-    parent: 'root', x: 100,  y: 100,  color: '#ff8040',
-    apply() { player.special.mightyBoom = (player.special.mightyBoom || 0) + 0.3; } },
-  { id: 'sw',     name: 'Frost Bite',     desc: 'Hits slow zombies +1.5s',   cost: 90,
-    parent: 'root', x: -100, y: 100,  color: '#7ec8ff',
-    apply() { player.special.slow = (player.special.slow || 0) + 1.5; } },
+// ---------- The Tree Of Upgrades — a giant EXP tree shaped like a real tree ----------
+// Central 'Awaken' root forks into 8 themed directions (cardinals + diagonals).
+// Each direction has 4 tiers, each requiring the previous. 33 nodes total.
+// Lines are drawn as curved roots for organic feel.
+const TREE_DIRS = [
+  { id: 'n',  angle: -Math.PI / 2,    color: '#5cd86b', name: 'Defense'  },
+  { id: 'ne', angle: -Math.PI / 4,    color: '#c47eff', name: 'Crit'     },
+  { id: 'e',  angle: 0,                color: '#ff5050', name: 'Power'    },
+  { id: 'se', angle: Math.PI / 4,      color: '#ff8040', name: 'Tactics'  },
+  { id: 's',  angle: Math.PI / 2,      color: '#5cffec', name: 'Mobility' },
+  { id: 'sw', angle: 3 * Math.PI / 4,  color: '#88aadd', name: 'Combat'   },
+  { id: 'w',  angle: Math.PI,          color: '#ffce44', name: 'Money'    },
+  { id: 'nw', angle: -3 * Math.PI / 4, color: '#a02828', name: 'Sustain'  },
 ];
+const TREE_RADII = [0, 65, 125, 180, 235];
+const TREE_TIER_COSTS = [0, 15, 40, 85, 160];
+// Per-direction effects, tier 1 → tier 4. Reuses player.special fields so
+// stacks with both the Tomes Shop and the post-wave card draw.
+const TREE_EFFECTS = {
+  n: [
+    { name: 'Resilient', desc: '+1 HP per second',    apply() { player.special.regen = (player.special.regen || 0) + 1; } },
+    { name: 'Bulwark',   desc: '+100 Max HP',         apply() { player.maxHp += 100; player.hp = Math.min(player.maxHp, player.hp + 100); } },
+    { name: 'Iron Body', desc: '-10% damage taken',   apply() { player.special.ironSkin = Math.min(0.5, (player.special.ironSkin || 0) + 0.1); } },
+    { name: 'Fortress',  desc: '+200 Max HP, full heal', apply() { player.maxHp += 200; player.hp = player.maxHp; } },
+  ],
+  ne: [
+    { name: 'Sharp Eye', desc: '+8% crit chance',     apply() { player.special.crit = (player.special.crit || 0) + 0.08; } },
+    { name: 'Sage Wisdom', desc: '+0.25x crit multiplier', apply() { player.special.critBurst = (player.special.critBurst || 0) + 0.25; } },
+    { name: 'Sniper',    desc: '+10% crit chance, +1 pierce', apply() { player.special.crit = (player.special.crit || 0) + 0.1; player.pierce += 1; } },
+    { name: 'Headshot',  desc: '+0.5x crit multiplier', apply() { player.special.critBurst = (player.special.critBurst || 0) + 0.5; } },
+  ],
+  e: [
+    { name: 'Stronger',  desc: '+5 base damage',      apply() { player.damage += 5; } },
+    { name: 'Marksman',  desc: '+1 pierce',           apply() { player.pierce += 1; } },
+    { name: 'Devastator',desc: '+25% bullet damage',  apply() { player.special.heavyCal = (player.special.heavyCal || 0) + 0.25; } },
+    { name: 'Overkill',  desc: '+25 base damage',     apply() { player.damage += 25; } },
+  ],
+  se: [
+    { name: 'Cold Bullets', desc: 'Hits slow zombies +1s', apply() { player.special.slow = (player.special.slow || 0) + 1; } },
+    { name: 'Heatwave',  desc: '+30% explosion radius',  apply() { player.special.mightyBoom = (player.special.mightyBoom || 0) + 0.3; } },
+    { name: 'Sturdy Walls', desc: '+200% HP for new walls', apply() { player.special.sturdyWalls = (player.special.sturdyWalls || 0) + 2; } },
+    { name: 'Mighty Throw', desc: '-25% secondary cooldown', apply() { player.special.mightyThrow = Math.min(0.7, (player.special.mightyThrow || 0) + 0.25); } },
+  ],
+  s: [
+    { name: 'Wind Step', desc: '+30 move speed',      apply() { player.speed += 30; } },
+    { name: 'Flit',      desc: '-25% dash cooldown',  apply() { player.special.quickstep = Math.min(0.7, (player.special.quickstep || 0) + 0.25); } },
+    { name: 'Cyclone',   desc: '+50 move speed',      apply() { player.speed += 50; } },
+    { name: 'Sprinter',  desc: '-25% dash cooldown',  apply() { player.special.quickstep = Math.min(0.7, (player.special.quickstep || 0) + 0.25); } },
+  ],
+  sw: [
+    { name: 'Boss Slayer', desc: '+50% damage to bosses', apply() { player.special.bossSlayer = (player.special.bossSlayer || 0) + 0.5; } },
+    { name: 'Multishot', desc: '+10% bonus shot chance', apply() { player.special.multishot = (player.special.multishot || 0) + 0.1; } },
+    { name: 'Eagle Eye', desc: '+30% bullet speed',    apply() { player.special.eagleEye = (player.special.eagleEye || 0) + 0.3; } },
+    { name: 'Battle Cry', desc: 'Shield at start of each wave', apply() { player.special.battleCry = 1; } },
+  ],
+  w: [
+    { name: 'Greedy',    desc: '+25% money on kill',  apply() { player.special.greed = (player.special.greed || 0) + 0.25; } },
+    { name: 'Hoarder',   desc: '+50% coin pickup range', apply() { player.special.magnet = (player.special.magnet || 0) + 0.5; } },
+    { name: 'Lucky',     desc: '+5% bonus coin drop', apply() { player.special.luckyFind = Math.min(1, (player.special.luckyFind || 0) + 0.05); } },
+    { name: 'Tycoon',    desc: '+50% money on kill',  apply() { player.special.greed = (player.special.greed || 0) + 0.5; } },
+  ],
+  nw: [
+    { name: 'Lifeleech', desc: '+8% lifesteal',       apply() { player.special.lifesteal = (player.special.lifesteal || 0) + 0.08; } },
+    { name: 'Vampire',   desc: '+3 HP per kill',      apply() { player.special.vampire = (player.special.vampire || 0) + 3; } },
+    { name: 'Soul Steal', desc: '+0.4s invuln per kill', apply() { player.special.soulSteal = (player.special.soulSteal || 0) + 0.4; } },
+    { name: 'Wave Crusher', desc: '+30 HP at wave end', apply() { player.special.waveCrush = (player.special.waveCrush || 0) + 30; } },
+  ],
+};
+// Build the flat ROOT_TREE from the structured data above.
+const ROOT_TREE = [
+  { id: 'root', parent: null, name: 'Awaken', desc: '+20 Max HP', cost: 0,
+    x: 0, y: 0, color: '#ffd166',
+    apply() { player.maxHp += 20; player.hp = Math.min(player.maxHp, player.hp + 20); } },
+];
+for (const dir of TREE_DIRS) {
+  for (let t = 1; t <= 4; t++) {
+    const eff = TREE_EFFECTS[dir.id][t - 1];
+    ROOT_TREE.push({
+      id: dir.id + t,
+      parent: t === 1 ? 'root' : dir.id + (t - 1),
+      name: eff.name,
+      desc: eff.desc,
+      cost: TREE_TIER_COSTS[t],
+      x: Math.cos(dir.angle) * TREE_RADII[t],
+      y: Math.sin(dir.angle) * TREE_RADII[t],
+      color: dir.color,
+      apply: eff.apply,
+    });
+  }
+}
 let rootOwned = {}; // id → true if bought
 function buyRootNode(id) {
   const node = ROOT_TREE.find(n => n.id === id);
@@ -1608,6 +1639,32 @@ function drawBullet(b) {
     ctx.beginPath(); ctx.arc(b.x, b.y, r * 2, 0, Math.PI*2); ctx.fill();
     return;
   }
+  if (b.bulletKind === 'bomb') {
+    // round black bomb body with a glowing fuse on top
+    ctx.save();
+    ctx.translate(b.x, b.y);
+    // body
+    ctx.fillStyle = '#1a1a22';
+    ctx.beginPath(); ctx.arc(0, 0, 5.5, 0, Math.PI*2); ctx.fill();
+    ctx.strokeStyle = '#0a0a0a';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    // fuse line
+    ctx.strokeStyle = '#6a4a18';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(2, -4);
+    ctx.lineTo(4, -7);
+    ctx.stroke();
+    // spark — flickers slightly via gameTime
+    const flicker = 1 + Math.sin(gameTime * 30) * 0.3;
+    ctx.fillStyle = '#ffd166';
+    ctx.beginPath(); ctx.arc(4, -7, 1.8 * flicker, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#fff5b8';
+    ctx.beginPath(); ctx.arc(4, -7, 0.8, 0, Math.PI*2); ctx.fill();
+    ctx.restore();
+    return;
+  }
   if (b.bulletKind === 'rail') {
     // long bright streak — render a tapered line behind the bullet
     const ang = Math.atan2(b.vy, b.vx);
@@ -1671,6 +1728,86 @@ function drawBullet(b) {
   // default — plain circle (explosive rockets render larger)
   ctx.fillStyle = b.color || '#ffe066';
   ctx.beginPath(); ctx.arc(b.x, b.y, b.explosive ? 5 : 3, 0, Math.PI*2); ctx.fill();
+}
+
+// Draw an ability-specific symbol centered at (x, y). Color comes from the
+// caller so the book stays themed; line/fill primitives are kept simple
+// so each icon reads at small sizes.
+function drawAbilityIcon(id, x, y, s, color) {
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.fillStyle = color;
+  ctx.lineWidth = 2;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  if (id === 'bulletTime') {
+    // clock face — circle + hour/minute hands
+    ctx.beginPath(); ctx.arc(x, y, s * 0.6, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(x, y); ctx.lineTo(x, y - s * 0.45);
+    ctx.moveTo(x, y); ctx.lineTo(x + s * 0.35, y);
+    ctx.stroke();
+  } else if (id === 'rage') {
+    // angry brow lines + drop (sweat? flame?)
+    ctx.beginPath();
+    ctx.moveTo(x - s * 0.5, y - s * 0.1); ctx.lineTo(x - s * 0.05, y - s * 0.35);
+    ctx.moveTo(x + s * 0.5, y - s * 0.1); ctx.lineTo(x + s * 0.05, y - s * 0.35);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(x, y - s * 0.05);
+    ctx.quadraticCurveTo(x + s * 0.45, y + s * 0.3, x, y + s * 0.55);
+    ctx.quadraticCurveTo(x - s * 0.45, y + s * 0.3, x, y - s * 0.05);
+    ctx.fill();
+  } else if (id === 'phase') {
+    // ghost — round top, wavy bottom
+    ctx.beginPath();
+    ctx.arc(x, y - s * 0.05, s * 0.45, Math.PI, 0);
+    ctx.lineTo(x + s * 0.45, y + s * 0.4);
+    ctx.lineTo(x + s * 0.25, y + s * 0.25);
+    ctx.lineTo(x + s * 0.05, y + s * 0.45);
+    ctx.lineTo(x - s * 0.15, y + s * 0.25);
+    ctx.lineTo(x - s * 0.35, y + s * 0.45);
+    ctx.lineTo(x - s * 0.45, y + s * 0.4);
+    ctx.closePath();
+    ctx.stroke();
+  } else if (id === 'homing') {
+    // target — three concentric rings
+    ctx.beginPath(); ctx.arc(x, y, s * 0.6, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.arc(x, y, s * 0.38, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.arc(x, y, s * 0.15, 0, Math.PI * 2); ctx.fill();
+  } else if (id === 'pull') {
+    // four arrows pointing inward
+    for (let k = 0; k < 4; k++) {
+      const a = k * Math.PI / 2;
+      const tx = x + Math.cos(a) * s * 0.5;
+      const ty = y + Math.sin(a) * s * 0.5;
+      const ix = x + Math.cos(a) * s * 0.15;
+      const iy = y + Math.sin(a) * s * 0.15;
+      ctx.beginPath();
+      ctx.moveTo(tx, ty);
+      ctx.lineTo(ix, iy);
+      ctx.stroke();
+      // arrowhead at the inside end
+      ctx.beginPath();
+      ctx.moveTo(ix, iy);
+      ctx.lineTo(ix + Math.cos(a - 2.3) * s * 0.2, iy + Math.sin(a - 2.3) * s * 0.2);
+      ctx.moveTo(ix, iy);
+      ctx.lineTo(ix + Math.cos(a + 2.3) * s * 0.2, iy + Math.sin(a + 2.3) * s * 0.2);
+      ctx.stroke();
+    }
+  } else if (id === 'storm') {
+    // lightning bolt
+    ctx.beginPath();
+    ctx.moveTo(x - s * 0.2, y - s * 0.55);
+    ctx.lineTo(x + s * 0.3, y - s * 0.05);
+    ctx.lineTo(x - s * 0.05, y + s * 0.05);
+    ctx.lineTo(x + s * 0.25, y + s * 0.55);
+    ctx.lineTo(x - s * 0.3, y);
+    ctx.lineTo(x, y);
+    ctx.closePath();
+    ctx.fill();
+  }
+  ctx.restore();
 }
 
 // Draw a distinctive icon for a pickup type, centered at (x, y).
@@ -1810,8 +1947,17 @@ addEventListener('keydown', e => {
   if (e.code === 'KeyE' && nearbyGun) doSwapWeapon();
   if (e.code === 'KeyF' && nearbyBladeCrate) doSwapSecondary();
   if (e.code === 'KeyQ' && !inShop() && !pendingCards) useSecondary();
-  if ((e.code === 'ShiftLeft' || e.code === 'ShiftRight') && !inShop() && !pendingCards) tryDash();
-  // ability hotkeys — fire only if unlocked and off cooldown
+  // Shift dashes AND fires the currently-selected unlocked ability
+  if ((e.code === 'ShiftLeft' || e.code === 'ShiftRight') && !inShop() && !pendingCards) {
+    tryDash();
+    tryActivateSelected();
+  }
+  // Tab cycles forward through unlocked abilities (no-op if none unlocked)
+  if (e.code === 'Tab' && !inShop() && !pendingCards) {
+    cycleAbility(e.shiftKey ? -1 : 1);
+    e.preventDefault();
+  }
+  // Direct hotkeys are still here for power users
   if (e.code === 'KeyZ') tryAbility('bulletTime');
   if (e.code === 'KeyX') tryAbility('rage');
   if (e.code === 'KeyC') tryAbility('phase');
@@ -2113,13 +2259,19 @@ function killZombie(z) {
   player.exp += z.expReward || 1;
   if (z.isBoss) {
     spawnBossChest(z.x, z.y);
-    // Boss kills also unlock a random ability the player doesn't have yet.
+    // Boss kills also drop an "ability book" — an open grimoire on the
+    // ground that the player can walk over to unlock a random missing
+    // ability. (Normal zombies do NOT drop ability books.)
     const locked = ABILITY_KEYS.filter(k => !player.abilities[k]);
     if (locked.length) {
       const pick = locked[Math.floor(Math.random() * locked.length)];
-      player.abilities[pick] = true;
-      const def = ABILITIES[pick];
-      floaters.push({ x: z.x, y: z.y - 40, text: `ABILITY: ${def.name}`, life: 3.0, color: def.color });
+      abilityBooks.push({
+        x: z.x + (Math.random() - 0.5) * 30,
+        y: z.y + (Math.random() - 0.5) * 30,
+        abilityId: pick,
+        life: 60,
+      });
+      dropBurst(z.x, z.y, ABILITIES[pick].color, 22);
     }
     // Queue a non-boss nuke at the boss position. We defer the actual
     // detonation to the start of the next tick so the kill site can finish
@@ -2592,27 +2744,38 @@ function useSecondary() {
   else if (def.kind === 'stun')   useStun(def);
   else if (def.kind === 'summon') useSummon(def);
   else if (def.kind === 'field')  useField(def);
-  else if (def.kind === 'mine')   useMine(def);
+  else if (def.kind === 'launcher') useBombLauncher(def);
   else if (def.kind === 'slowtime') useSlowTime(def);
 }
 
-function useMine(def) {
-  mines.push({
-    x: player.x, y: player.y,
+// Bomb Launcher — fire an explosive bullet in the aim direction. Reuses the
+// existing bullet/explode pipeline rather than introducing a new entity.
+function useBombLauncher(def) {
+  const ang = Math.atan2(mouse.y - player.y, mouse.x - player.x);
+  const { dmg, isCrit } = rollPerkedDamage(def.damage);
+  const speedMul = 1 + (player.special.eagleEye || 0);
+  bullets.push({
+    x: player.x + Math.cos(ang) * (player.r + 6),
+    y: player.y + Math.sin(ang) * (player.r + 6),
+    vx: Math.cos(ang) * def.speed * speedMul,
+    vy: Math.sin(ang) * def.speed * speedMul,
+    damage: dmg,
+    pierce: 0,
+    hits: new Set(),
     life: def.life,
-    triggerR: def.triggerR,
-    damage: def.damage,
+    color: isCrit ? '#fff5a8' : def.color,
+    explosive: true,
     blastR: def.blastR,
     blastDmg: def.blastDmg,
-    armed: 0.6, // 0.6s arming delay so we don't blow ourselves up
+    bulletKind: 'bomb',
+    bounces: 0, leavesSlick: false, spawnChicks: 0,
+    chains: 0, chainRange: 0,
+    orbitAngle: 0, orbitRadius: 0, orbitSpeed: 0,
+    homing: false,
+    isCrit,
   });
-  // tiny puff to mark the placement
-  for (let i = 0; i < 12; i++) {
-    const a = Math.random() * Math.PI * 2;
-    const s = 60 + Math.random() * 80;
-    particles.push({ x: player.x, y: player.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s, life: 0.4, color: def.color });
-  }
-  SFX.crate();
+  muzzleFlash(player.x + Math.cos(ang) * (player.r + 10), player.y + Math.sin(ang) * (player.r + 10), ang);
+  SFX.shoot('rocket');
 }
 
 function useSlowTime(def) {
@@ -2632,21 +2795,27 @@ function useSlowTime(def) {
   SFX.unlock();
 }
 
-function updateMines(dt) {
-  for (let i = mines.length - 1; i >= 0; i--) {
-    const m = mines[i];
-    m.life -= dt;
-    m.armed -= dt;
-    if (m.life <= 0) { mines.splice(i, 1); continue; }
-    if (m.armed > 0) continue; // can't trigger yet
-    for (const z of zombies) {
-      if (z.isDummy) continue;
-      const dx = z.x - m.x, dy = z.y - m.y;
-      if (dx*dx + dy*dy < m.triggerR * m.triggerR) {
-        explode(m.x, m.y, m.blastR, m.damage + m.blastDmg);
-        mines.splice(i, 1);
-        break;
+// Walk-over pickup that unlocks a single ability when the player touches it.
+function updateAbilityBooks(dt) {
+  for (let i = abilityBooks.length - 1; i >= 0; i--) {
+    const b = abilityBooks[i];
+    b.life -= dt;
+    if (b.life <= 0) { abilityBooks.splice(i, 1); continue; }
+    const dx = player.x - b.x, dy = player.y - b.y;
+    if (dx*dx + dy*dy < (player.r + 18) * (player.r + 18)) {
+      player.abilities[b.abilityId] = true;
+      // Auto-select the newly-acquired ability so the player can fire it
+      // immediately with Shift if it's their first.
+      selectedAbility = ABILITY_KEYS.indexOf(b.abilityId);
+      const def = ABILITIES[b.abilityId];
+      floaters.push({ x: b.x, y: b.y - 22, text: `ABILITY: ${def.name}`, life: 3.0, color: def.color });
+      for (let k = 0; k < 22; k++) {
+        const a = Math.random() * Math.PI * 2;
+        const s = 80 + Math.random() * 200;
+        particles.push({ x: b.x, y: b.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s, life: 0.6, color: def.color });
       }
+      (SFX_ABILITIES[b.abilityId] || SFX.chestOpen)();
+      abilityBooks.splice(i, 1);
     }
   }
 }
@@ -2832,8 +3001,57 @@ function tryAbility(id) {
   }
   floaters.push({ x: player.x, y: player.y - 22, text: def.name, life: 1.4, color: def.color });
   shake(4);
-  SFX.unlock();
+  // Per-ability sound, falling back to the generic unlock cue
+  (SFX_ABILITIES[id] || SFX.unlock)();
 }
+
+// Step the ability selector to the next/previous unlocked ability (Tab).
+function cycleAbility(dir) {
+  const unlocked = ABILITY_KEYS.filter(k => player.abilities[k]);
+  if (!unlocked.length) return;
+  // Find current selection within the unlocked subset
+  const currentKey = ABILITY_KEYS[selectedAbility];
+  let idx = unlocked.indexOf(currentKey);
+  if (idx < 0) idx = 0;
+  idx = (idx + dir + unlocked.length) % unlocked.length;
+  selectedAbility = ABILITY_KEYS.indexOf(unlocked[idx]);
+  SFX.uiClick();
+}
+
+// Activate whatever ability is currently selected (called from Shift).
+function tryActivateSelected() {
+  const key = ABILITY_KEYS[selectedAbility];
+  if (key && player.abilities[key]) tryAbility(key);
+}
+
+// Per-ability sound effect played at activation.
+const SFX_ABILITIES = {
+  bulletTime() {
+    tone({ freq: 480, type: 'sine', dur: 0.4, vol: 0.22, sweep: -250 });
+    tone({ freq: 120, type: 'sine', dur: 0.6, vol: 0.18, sweep: -40, delay: 0.05 });
+  },
+  rage() {
+    tone({ freq: 110, type: 'sawtooth', dur: 0.4, vol: 0.32, sweep: 80 });
+    noise({ dur: 0.25, vol: 0.2, lowpass: 800 });
+  },
+  phase() {
+    tone({ freq: 720, type: 'sine', dur: 0.25, vol: 0.22, sweep: 600 });
+    tone({ freq: 1320, type: 'sine', dur: 0.3, vol: 0.16, sweep: -400, delay: 0.05 });
+  },
+  homing() {
+    tone({ freq: 440, type: 'square', dur: 0.16, vol: 0.22, sweep: 400 });
+    tone({ freq: 880, type: 'square', dur: 0.16, vol: 0.18, sweep: 400, delay: 0.06 });
+  },
+  pull() {
+    tone({ freq: 220, type: 'sawtooth', dur: 0.45, vol: 0.28, sweep: -160 });
+    noise({ dur: 0.3, vol: 0.18, lowpass: 600 });
+  },
+  storm() {
+    noise({ dur: 0.45, vol: 0.32, hipass: 2000 });
+    tone({ freq: 90, type: 'sawtooth', dur: 0.4, vol: 0.28, sweep: -20 });
+    tone({ freq: 1800, type: 'square', dur: 0.12, vol: 0.16, sweep: -1200, delay: 0.04 });
+  },
+};
 
 // Permanent dash — bound to Shift, gated by player.dashCooldown.
 function tryDash() {
@@ -3077,19 +3295,25 @@ function swingMelee(def, ang) {
     if (Math.abs(da) > def.arc / 2) continue;
 
     const { dmg, isCrit } = rollPerkedDamage(def.damage);
-    const dealt = Math.min(dmg, z.hp);
-    z.hp -= dmg;
+    // Boss Slayer perk applies to direct melee hits too
+    const bossMul = z.isBoss && player.special.bossSlayer ? 1 + player.special.bossSlayer : 1;
+    const actualDmg = dmg * bossMul;
+    const dealt = Math.min(actualDmg, z.hp);
+    z.hp -= actualDmg;
     if (player.special.lifesteal) {
       player.hp = Math.min(player.maxHp, player.hp + dealt * player.special.lifesteal);
     }
     if (player.special.slow) {
       z.slowTimer = Math.max(z.slowTimer || 0, player.special.slow);
     }
-    // knockback — push the zombie away from the player
+    // Knockback — push the zombie away from the player by knockback pixels,
+    // clamped to canvas bounds. Bosses resist by default (only 25% push).
     if (def.knockback) {
-      const k = def.knockback / Math.max(d, 1);
-      z.x += (dx / d) * def.knockback * 0.02; // small immediate displacement
-      z.y += (dy / d) * def.knockback * 0.02;
+      const push = z.isBoss ? def.knockback * 0.25 : def.knockback;
+      const knx = (z.x - player.x) / d;
+      const kny = (z.y - player.y) / d;
+      z.x = Math.max(z.r, Math.min(W - z.r, z.x + knx * push));
+      z.y = Math.max(z.r, Math.min(H - z.r, z.y + kny * push));
     }
     if (z.hp <= 0) {
       killZombie(z);
@@ -3110,14 +3334,18 @@ function swingMelee(def, ang) {
 
 function throwBlades(def, ang) {
   SFX.throwBlade();
-  for (let i = 0; i < def.shots; i++) {
-    const a = ang + (i - (def.shots - 1) / 2) * def.spread;
+  // Multishot perk can grant an extra blade per throw; Eagle Eye boosts speed.
+  let shots = def.shots;
+  if (player.special.multishot && Math.random() < player.special.multishot) shots += 1;
+  const speedMul = 1 + (player.special.eagleEye || 0);
+  for (let i = 0; i < shots; i++) {
+    const a = ang + (i - (shots - 1) / 2) * def.spread;
     const { dmg, isCrit } = rollPerkedDamage(def.damage);
     bullets.push({
       x: player.x + Math.cos(a) * (player.r + 4),
       y: player.y + Math.sin(a) * (player.r + 4),
-      vx: Math.cos(a) * def.speed,
-      vy: Math.sin(a) * def.speed,
+      vx: Math.cos(a) * def.speed * speedMul,
+      vy: Math.sin(a) * def.speed * speedMul,
       damage: dmg,
       pierce: def.pierce,
       hits: new Set(),
@@ -3134,11 +3362,12 @@ function throwBlades(def, ang) {
 function throwChakram(def, ang) {
   SFX.throwBlade();
   const { dmg, isCrit } = rollPerkedDamage(def.damage);
+  const speedMul = 1 + (player.special.eagleEye || 0);
   bullets.push({
     x: player.x + Math.cos(ang) * (player.r + 6),
     y: player.y + Math.sin(ang) * (player.r + 6),
-    vx: Math.cos(ang) * def.speed,
-    vy: Math.sin(ang) * def.speed,
+    vx: Math.cos(ang) * def.speed * speedMul,
+    vy: Math.sin(ang) * def.speed * speedMul,
     damage: dmg,
     pierce: def.pierce,
     hits: new Set(),
@@ -3929,6 +4158,8 @@ function hardReset() {
   player.rageTimer = 0;
   bulletTimeTimer = 0;
   homingBulletsTimer = 0;
+  selectedAbility = 0;
+  abilityBooks.length = 0;
   treeLevels = { combat: 0, survival: 0, economy: 0 };
   rootOwned = {};
   treeView = 'tomes';
@@ -3953,7 +4184,6 @@ function hardReset() {
   bladeCrates.length = 0;
   summons.length = 0;
   healFields.length = 0;
-  mines.length = 0;
   decals.length = 0;
   shakeAmt = 0; flashRed = 0; nearbyGun = null;
   player.weapon = 'pistol';
@@ -4019,25 +4249,6 @@ function render() {
     ctx.fillRect(f.x - 2, f.y - 8, 4, 16);
     ctx.fillRect(f.x - 8, f.y - 2, 16, 4);
     ctx.restore();
-  }
-
-  // proximity mines — small disc with a blinking red light
-  for (const m of mines) {
-    const blink = m.armed > 0 ? false : (Math.floor(gameTime * 5) % 2 === 0);
-    ctx.fillStyle = '#3a1010';
-    ctx.beginPath(); ctx.arc(m.x, m.y, 10, 0, Math.PI*2); ctx.fill();
-    ctx.strokeStyle = '#1a0a0a';
-    ctx.lineWidth = 2;
-    ctx.stroke();
-    // 4 tiny prong indents
-    ctx.fillStyle = '#1a0a0a';
-    for (let k = 0; k < 4; k++) {
-      const a = k * Math.PI / 2;
-      ctx.beginPath(); ctx.arc(m.x + Math.cos(a) * 9, m.y + Math.sin(a) * 9, 1.6, 0, Math.PI*2); ctx.fill();
-    }
-    // center light
-    ctx.fillStyle = m.armed > 0 ? '#888' : (blink ? '#ff5050' : '#220505');
-    ctx.beginPath(); ctx.arc(m.x, m.y, 3.5, 0, Math.PI*2); ctx.fill();
   }
 
   // banana slicks
@@ -4529,6 +4740,49 @@ function render() {
     ctx.textAlign = 'center';
     ctx.fillText(def.tag, c.x, cy + 4);
     ctx.textAlign = 'left';
+  }
+
+  // ability books — open grimoires the player walks over to unlock abilities
+  for (const b of abilityBooks) {
+    const def = ABILITIES[b.abilityId];
+    const flash = b.life < 8 && Math.floor(b.life * 6) % 2 === 0;
+    const bob = Math.sin(gameTime * 3 + b.x * 0.07) * 2;
+    const cy = b.y + bob;
+    // pulsing aura
+    const pulse = 1 + Math.sin(gameTime * 4 + b.x) * 0.1;
+    const auraR = 30 * pulse;
+    const aura = ctx.createRadialGradient(b.x, cy, 4, b.x, cy, auraR);
+    aura.addColorStop(0, def.color + 'cc');
+    aura.addColorStop(1, def.color + '00');
+    ctx.fillStyle = aura;
+    ctx.beginPath(); ctx.arc(b.x, cy, auraR, 0, Math.PI*2); ctx.fill();
+    // open-book base — two parchment pages with a spine in the middle
+    const bw = 36, bh = 28;
+    ctx.fillStyle = '#3a2410';
+    ctx.fillRect(b.x - bw/2, cy - bh/2, bw, bh);
+    ctx.strokeStyle = '#1a0e04';
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(b.x - bw/2, cy - bh/2, bw, bh);
+    // left page
+    ctx.fillStyle = flash ? '#fff' : '#f4e4b5';
+    ctx.fillRect(b.x - bw/2 + 3, cy - bh/2 + 3, bw/2 - 4, bh - 6);
+    // right page
+    ctx.fillRect(b.x + 1, cy - bh/2 + 3, bw/2 - 4, bh - 6);
+    // spine
+    ctx.fillStyle = '#8a5a2a';
+    ctx.fillRect(b.x - 1, cy - bh/2 + 2, 2, bh - 4);
+    // page lines (subtle)
+    ctx.strokeStyle = '#8a5a2a';
+    ctx.lineWidth = 0.5;
+    for (let i = 0; i < 3; i++) {
+      const ly = cy - 4 + i * 4;
+      ctx.beginPath();
+      ctx.moveTo(b.x - bw/2 + 6, ly); ctx.lineTo(b.x - 3, ly);
+      ctx.moveTo(b.x + 3, ly); ctx.lineTo(b.x + bw/2 - 6, ly);
+      ctx.stroke();
+    }
+    // ability symbol drawn across the open pages
+    drawAbilityIcon(b.abilityId, b.x, cy - 1, 10, def.color);
   }
 
   // random pickups
@@ -5395,7 +5649,8 @@ function drawRootTreeContent() {
   ctx.textAlign = 'center';
   ctx.fillText('grow your roots — each child requires its parent', W / 2, 142);
 
-  const cx = W / 2, cy = H / 2 + 40; // central node anchor for the system
+  // Center the tree slightly above center to leave room for the close button.
+  const cx = W / 2, cy = H / 2 + 10;
 
   // First pass: draw the root-like connection lines between parent and child
   for (const node of ROOT_TREE) {
@@ -5427,7 +5682,8 @@ function drawRootTreeContent() {
     const parentOwned = !node.parent || !!rootOwned[node.parent];
     const available = !owned && parentOwned;
     const canAfford = available && player.exp >= node.cost;
-    const r = node.id === 'root' ? 34 : 28;
+    // Smaller per-tier node radius now that the tree extends further out.
+    const r = node.id === 'root' ? 28 : 20;
     const rect = { x: nx - r, y: ny - r, w: r * 2, h: r * 2, id: 'root-' + node.id };
     const hover = pointInRect(mouse, rect);
     // glow if available
@@ -5467,7 +5723,7 @@ function drawRootTreeContent() {
   // tooltip for the hovered node — desc on the bottom
   for (const node of ROOT_TREE) {
     const nx = cx + node.x, ny = cy + node.y;
-    const r = node.id === 'root' ? 34 : 28;
+    const r = node.id === 'root' ? 28 : 20;
     const rect = { x: nx - r, y: ny - r, w: r * 2, h: r * 2 };
     if (pointInRect(mouse, rect)) {
       ctx.fillStyle = '#fff';
@@ -6173,23 +6429,25 @@ function drawHud() {
       by += 14;
     }
   }
-  // Active abilities — small pills along the bottom-left showing which keys
-  // are bound, with a cooldown bar that fills when ready.
+  // Active abilities — small pills along the bottom-left. The currently
+  // selected ability (fired by Shift) is highlighted with a thicker border.
   const unlocked = ABILITY_KEYS.filter(k => player.abilities[k]);
   if (unlocked.length) {
     const pw = 64, ph = 24, gap = 6;
     let ax = 14, ay = H - 14 - ph;
+    const curKey = ABILITY_KEYS[selectedAbility];
     for (const k of unlocked) {
       const def = ABILITIES[k];
       const last = player.abilityLast[k] || -Infinity;
       const elapsed = gameTime - last;
       const ratio = Math.max(0, Math.min(1, elapsed / def.cooldown));
       const ready = ratio >= 1;
+      const isSelected = k === curKey;
       // body
       ctx.fillStyle = ready ? '#13261c' : '#13151c';
       ctx.fillRect(ax, ay, pw, ph);
-      ctx.strokeStyle = ready ? def.color : '#33363f';
-      ctx.lineWidth = ready ? 2 : 1;
+      ctx.strokeStyle = isSelected ? '#fff' : (ready ? def.color : '#33363f');
+      ctx.lineWidth = isSelected ? 2.5 : (ready ? 2 : 1);
       ctx.strokeRect(ax, ay, pw, ph);
       // hotkey letter on the left
       ctx.fillStyle = def.color;
@@ -6207,6 +6465,11 @@ function drawHud() {
       ctx.fillRect(ax + 20, ay + 16, (pw - 26) * ratio, 4);
       ax += pw + gap;
     }
+    // small footer hint
+    ctx.fillStyle = '#5a5d66';
+    ctx.font = '10px system-ui';
+    ctx.textAlign = 'left';
+    ctx.fillText('Tab cycles · Shift fires', 14, ay - 4);
   }
   // Picked perks (tomes)
   const perkKeys = Object.keys(player.specialLevels).filter(k => player.specialLevels[k] > 0);
@@ -6538,7 +6801,7 @@ function tick() {
     updateBladeCrates(dt);
     updateSummons(dt);
     updateHealFields(dt);
-    updateMines(dt);
+    updateAbilityBooks(dt);
     updateParticles(dt);
     updateDecals(dt);
     updateWave(dt);
