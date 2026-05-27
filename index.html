@@ -8307,7 +8307,7 @@ function drawMainMenu() {
   }
 
   // buttons
-  const bw = 280, bh = 68, gap = 14;
+  const bw = 280;
   const showResume = hasGame;
   const buttons = [];
   if (showResume) buttons.push({ id: 'resume', label: 'Resume', hint: '', accent: '#8be08b' });
@@ -8316,8 +8316,16 @@ function drawMainMenu() {
   buttons.push({ id: 'tutorial', label: 'How to Play',                    hint: 'controls + systems', accent: '#5cffec' });
   buttons.push({ id: 'guided',   label: 'Guided Tutorial',                hint: 'walks you through each action', accent: '#9bf07a' });
   buttons.push({ id: 'settings', label: 'Settings',                        hint: 'audio, sprites, more', accent: '#c47eff' });
+  // Adaptive sizing — the button stack grew from 4 to 6 entries, so size
+  // them to fit between the title block and the bottom of the canvas
+  // instead of using fixed dimensions that overflowed.
+  const titleEnd = 280;
+  const bottomMargin = 24;
+  const gap = 10;
+  const avail = (H - bottomMargin) - titleEnd;
+  const bh = Math.min(68, Math.floor((avail - gap * (buttons.length - 1)) / buttons.length));
   const totalH = buttons.length * bh + (buttons.length - 1) * gap;
-  let by = H / 2 - 20;
+  let by = Math.max(titleEnd + 6, (H + titleEnd - totalH) / 2);
   menuButtons = [];
   for (const b of buttons) {
     const rect = { x: (W - bw) / 2, y: by, w: bw, h: bh, id: b.id };
