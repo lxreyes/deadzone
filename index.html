@@ -8188,38 +8188,32 @@ function drawCheats() {
     return;
   }
   const x = cheatsPanel.x, y = cheatsPanel.y;
-  const btnH = 22, header = 26, secHeaderH = 26;
-  // Horizontal layout dimensions: each section is a vertical column.
-  // Collapsed columns are thin (icon only). Expanded columns are wide
-  // (icon + name + items stacked below the header).
-  const colCollapsedW = 34;
-  const colExpandedW = 148;
-  const colStatsExpW = 240;
-  const colGap = 2;
+  const header = 26, secHeaderH = 24;
+  // Vertical section list, but each open section lays its items out as a
+  // horizontal grid that wraps across rows. Sliders stay vertical (they're
+  // wide and benefit from one-per-row).
+  const w = 420;
   const padPanel = 6;
+  const itemW = 100;
+  const itemH = 22;
+  const itemGap = 2;
   const sliderRowH = 22;
-  // Total panel width = sum of column widths + padding + gap
-  let totalCols = padPanel;
-  for (const sec of cheatSections) {
-    totalCols += (sec.open ? colExpandedW : colCollapsedW) + colGap;
+  const itemsPerRow = Math.max(1, Math.floor((w - padPanel * 2) / (itemW + itemGap)));
+  // Compute body height by walking the same layout we'll use below
+  function sectionContentH(sec) {
+    if (!sec.open) return 0;
+    const rows = Math.ceil(sec.items.length / itemsPerRow);
+    return rows * (itemH + itemGap) + 4;
   }
-  totalCols += (slidersOpen ? colStatsExpW : colCollapsedW) + colGap;
-  totalCols += padPanel - colGap; // trim trailing gap, add right pad
-  // Max body height = tallest open column (or just the section header height)
-  let maxBodyH = secHeaderH;
+  let bodyH = 0;
   if (cheatsOpen) {
     for (const sec of cheatSections) {
-      if (sec.open) {
-        maxBodyH = Math.max(maxBodyH, secHeaderH + sec.items.length * (btnH + 2) + 6);
-      }
+      bodyH += secHeaderH + 2 + sectionContentH(sec);
     }
-    if (slidersOpen) {
-      maxBodyH = Math.max(maxBodyH, secHeaderH + cheatSliders.length * (sliderRowH + 2) + 6);
-    }
+    bodyH += secHeaderH + 2;
+    if (slidersOpen) bodyH += cheatSliders.length * (sliderRowH + 2) + 6;
   }
-  // When closed, the panel is just the master bar at its minimum width.
-  const w = cheatsOpen ? totalCols : 200;
-  const h = cheatsOpen ? header + maxBodyH + 6 : header;
+  const h = cheatsOpen ? header + bodyH + 6 : header;
   // Outer panel — slightly more opaque than before, single-pixel border
   ctx.fillStyle = 'rgba(10, 12, 18, 0.96)';
   ctx.fillRect(x, y, w, h);
@@ -8261,152 +8255,151 @@ function drawCheats() {
     return;
   }
 
-  // ---- Horizontal section columns ----
-  // Each section is rendered as a vertical column. Collapsed = thin
-  // icon-only strip; expanded = wider column with icon + name and items
-  // stacked vertically below the header.
-  let bx = x + padPanel;
-  const colY = y + header + 4;
+  // ---- Vertical section list with horizontal-wrap items per open section ----
+  let by = y + header + 4;
 
-  const drawColumnHeader = (sec, accent, cw, name) => {
-    const rect = { x: bx, y: colY, w: cw, h: secHeaderH, sec };
+  // Helper that draws a full-width section header (vertical-stack style).
+  const drawSectionHeader = (sec, accent, name, isStats = false) => {
+    const rect = { x: x + padPanel, y: by, w: w - padPanel * 2, h: secHeaderH, sec };
     if (sec) sec.headerRect = rect;
-    const hover = pointInRect(mouse, rect);
+    if (isStats) slidersHeaderRect = rect;
     const open = sec ? sec.open : slidersOpen;
-    // Background
+    const hover = pointInRect(mouse, rect);
     ctx.fillStyle = open ? '#161924' : (hover ? '#1a1d28' : '#10131c');
     ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
-    // Top accent stripe (was left-edge in the vertical layout — now top)
+    // Left accent stripe in section color
     ctx.fillStyle = accent;
-    ctx.fillRect(rect.x, rect.y, rect.w, 3);
-    // Icon: centered when collapsed, left-anchored when expanded
-    const iconCx = open ? rect.x + 14 : rect.x + rect.w / 2;
-    const iconCy = open ? rect.y + rect.h / 2 + 1 : rect.y + rect.h / 2 - 2;
-    drawCheatSectionIcon(sec ? sec.id : 'stats', iconCx, iconCy, 12, accent);
-    if (open) {
-      // Name + chevron when expanded
-      ctx.fillStyle = accent;
-      ctx.font = 'bold 9px system-ui';
-      ctx.textAlign = 'left';
-      fitFont(name.toUpperCase(), cw - 30, 'bold 9px system-ui', 7);
-      ctx.fillText(name.toUpperCase(), rect.x + 26, rect.y + 17);
+    ctx.fillRect(rect.x, rect.y, 3, rect.h);
+    // Icon + name
+    drawCheatSectionIcon(isStats ? 'stats' : sec.id, rect.x + 16, rect.y + rect.h / 2, 12, accent);
+    ctx.fillStyle = open ? accent : '#cfd3da';
+    ctx.font = 'bold 10px system-ui';
+    ctx.textAlign = 'left';
+    ctx.fillText(name.toUpperCase(), rect.x + 28, rect.y + 15);
+    // Item count when closed + chevron
+    if (!open && sec) {
+      ctx.fillStyle = '#5a5d66';
       ctx.font = '9px system-ui';
       ctx.textAlign = 'right';
-      ctx.fillText('▾', rect.x + cw - 5, rect.y + 17);
-    } else {
-      // Tiny chevron at the bottom hints the column can be opened
-      ctx.fillStyle = '#5a5d66';
-      ctx.font = '7px system-ui';
-      ctx.textAlign = 'center';
-      ctx.fillText('▸', rect.x + rect.w / 2, rect.y + rect.h - 3);
+      ctx.fillText(`${sec.items.length}`, rect.x + rect.w - 20, rect.y + 15);
     }
+    ctx.fillStyle = open ? accent : '#5a5d66';
+    ctx.font = '10px system-ui';
+    ctx.textAlign = 'right';
+    ctx.fillText(open ? '▾' : '▸', rect.x + rect.w - 6, rect.y + 15);
     ctx.textAlign = 'left';
-    return rect;
   };
 
   for (const sec of cheatSections) {
     const accent = cheatSectionColor(sec.id);
-    const cw = sec.open ? colExpandedW : colCollapsedW;
-    drawColumnHeader(sec, accent, cw, sec.name);
+    drawSectionHeader(sec, accent, sec.name);
+    by += secHeaderH + 2;
 
-    if (sec.open) {
-      // Items stacked vertically below the section's header
-      let iy = colY + secHeaderH + 2;
-      for (const c of sec.items) {
-        const isOn = c.toggle ? c.toggle() : false;
-        const rect = { x: bx + 4, y: iy, w: cw - 8, h: btnH };
-        c.rect = rect;
-        const bhov = pointInRect(mouse, rect);
-        // Body fill — toggled-on / hover / idle
-        if (isOn) ctx.fillStyle = '#1e3a26';
-        else if (bhov) ctx.fillStyle = '#1c2030';
-        else ctx.fillStyle = '#14171f';
-        ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
-        // Faint left stripe in the section accent
-        ctx.save();
-        ctx.globalAlpha = isOn ? 0.95 : (bhov ? 0.6 : 0.25);
-        ctx.fillStyle = accent;
-        ctx.fillRect(rect.x, rect.y, 2, rect.h);
-        ctx.restore();
-        // Label — fitFont keeps long labels from spilling out of the narrow column
-        const labelStr = typeof c.label === 'function' ? c.label() : c.label;
-        ctx.fillStyle = isOn ? '#bff0bf' : (bhov ? '#fff' : '#dfe2e8');
-        const rightPad = c.toggle ? 18 : 6;
-        fitFont(labelStr, rect.w - 12 - rightPad, 'bold 10px system-ui', 8);
-        ctx.textAlign = 'left';
-        ctx.fillText(labelStr, rect.x + 8, rect.y + 14);
-        // Toggle dot indicator
-        if (c.toggle) {
-          const dx = rect.x + rect.w - 10;
-          const dy = rect.y + rect.h / 2;
-          if (isOn) {
-            ctx.fillStyle = 'rgba(139, 224, 139, 0.35)';
-            ctx.beginPath(); ctx.arc(dx, dy, 6, 0, Math.PI * 2); ctx.fill();
-            ctx.fillStyle = '#8be08b';
-            ctx.beginPath(); ctx.arc(dx, dy, 3.5, 0, Math.PI * 2); ctx.fill();
-          } else {
-            ctx.strokeStyle = '#3a3d46';
-            ctx.lineWidth = 1.5;
-            ctx.beginPath(); ctx.arc(dx, dy, 4, 0, Math.PI * 2); ctx.stroke();
-          }
-        }
-        iy += btnH + 2;
-      }
-    } else {
-      // Clear stale rects so collapsed columns can't be clicked
+    if (!sec.open) {
       for (const c of sec.items) c.rect = null;
+      continue;
     }
-    bx += cw + colGap;
+
+    // Items lay out left-to-right inside the section's row block, wrapping
+    // to additional rows when they overflow the panel width.
+    let col = 0;
+    let iy = by;
+    for (const c of sec.items) {
+      const isOn = c.toggle ? c.toggle() : false;
+      const ix = x + padPanel + col * (itemW + itemGap);
+      const rect = { x: ix, y: iy, w: itemW, h: itemH };
+      c.rect = rect;
+      const bhov = pointInRect(mouse, rect);
+      // Body fill
+      if (isOn) ctx.fillStyle = '#1e3a26';
+      else if (bhov) ctx.fillStyle = '#1c2030';
+      else ctx.fillStyle = '#14171f';
+      ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+      // Faint accent stripe along the top
+      ctx.save();
+      ctx.globalAlpha = isOn ? 0.95 : (bhov ? 0.6 : 0.25);
+      ctx.fillStyle = accent;
+      ctx.fillRect(rect.x, rect.y, rect.w, 2);
+      ctx.restore();
+      // Label
+      const labelStr = typeof c.label === 'function' ? c.label() : c.label;
+      ctx.fillStyle = isOn ? '#bff0bf' : (bhov ? '#fff' : '#dfe2e8');
+      const rightPad = c.toggle ? 18 : 4;
+      fitFont(labelStr, rect.w - 8 - rightPad, 'bold 10px system-ui', 8);
+      ctx.textAlign = 'left';
+      ctx.fillText(labelStr, rect.x + 6, rect.y + 14);
+      // Toggle dot — small green pulse when on, dim ring when off
+      if (c.toggle) {
+        const dx = rect.x + rect.w - 10;
+        const dy = rect.y + rect.h / 2;
+        if (isOn) {
+          ctx.fillStyle = 'rgba(139, 224, 139, 0.35)';
+          ctx.beginPath(); ctx.arc(dx, dy, 6, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = '#8be08b';
+          ctx.beginPath(); ctx.arc(dx, dy, 3.5, 0, Math.PI * 2); ctx.fill();
+        } else {
+          ctx.strokeStyle = '#3a3d46';
+          ctx.lineWidth = 1.5;
+          ctx.beginPath(); ctx.arc(dx, dy, 4, 0, Math.PI * 2); ctx.stroke();
+        }
+      }
+      // advance to next slot in row, wrap if needed
+      col++;
+      if (col >= itemsPerRow) {
+        col = 0;
+        iy += itemH + itemGap;
+      }
+    }
+    // Move by past the last row of items (account for partial row)
+    by = iy + (col > 0 ? itemH + itemGap : 0) + 4;
   }
 
-  // STATS column at the end — wider when expanded so sliders fit
+  // STATS section — header (full width) + sliders below (vertical, full width)
   const statsColor = '#9aa0ab';
-  const cwStats = slidersOpen ? colStatsExpW : colCollapsedW;
-  slidersHeaderRect = drawColumnHeader(null, statsColor, cwStats, 'Stats');
+  drawSectionHeader(null, statsColor, 'Stats', true);
+  by += secHeaderH + 2;
 
-  if (slidersOpen) {
-    // Sliders stacked vertically inside the STATS column
-    let iy = colY + secHeaderH + 2;
-    const trackX = bx + 92;
-    const trackW = cwStats - 92 - 38;
-    const knobR = 5;
-    for (const s of cheatSliders) {
-      const rect = { x: bx + 4, y: iy, w: cwStats - 8, h: sliderRowH, trackX, trackW, trackY: iy + 11 };
-      s.rect = rect;
-      // label
-      ctx.fillStyle = '#9aa0ab';
-      ctx.font = 'bold 10px system-ui';
-      ctx.textAlign = 'left';
-      ctx.fillText(s.label, bx + 8, iy + 14);
-      // track
-      ctx.fillStyle = '#1c1f28';
-      ctx.fillRect(trackX, iy + 8, trackW, 6);
-      ctx.strokeStyle = '#33363f';
-      ctx.lineWidth = 1;
-      ctx.strokeRect(trackX, iy + 8, trackW, 6);
-      // fill + knob
-      const val = s.get();
-      const t = Math.max(0, Math.min(1, (val - s.min) / (s.max - s.min)));
-      ctx.fillStyle = '#5a87c4';
-      ctx.fillRect(trackX, iy + 8, trackW * t, 6);
-      ctx.fillStyle = sliderDrag && sliderDrag.slider === s ? '#fff' : '#88aadd';
-      ctx.beginPath();
-      ctx.arc(trackX + trackW * t, iy + 11, knobR, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.strokeStyle = '#0a0a0a';
-      ctx.lineWidth = 1;
-      ctx.stroke();
-      // value
-      ctx.fillStyle = '#fff';
-      ctx.font = 'bold 10px system-ui';
-      ctx.textAlign = 'right';
-      const display = s.step < 1 ? val.toFixed(1) : Math.round(val).toString();
-      ctx.fillText(display, bx + cwStats - 6, iy + 14);
-      ctx.textAlign = 'left';
-      iy += sliderRowH + 2;
-    }
-  } else {
+  if (!slidersOpen) {
     for (const s of cheatSliders) s.rect = null;
+    return;
+  }
+
+  // Sliders stacked vertically — each spans the full panel width
+  const trackX = x + padPanel + 90;
+  const trackW = w - padPanel * 2 - 90 - 40;
+  const knobR = 5;
+  for (const s of cheatSliders) {
+    const rect = { x: x + padPanel, y: by, w: w - padPanel * 2, h: sliderRowH, trackX, trackW, trackY: by + 11 };
+    s.rect = rect;
+    ctx.fillStyle = '#9aa0ab';
+    ctx.font = 'bold 10px system-ui';
+    ctx.textAlign = 'left';
+    ctx.fillText(s.label, x + padPanel + 6, by + 14);
+    // Track
+    ctx.fillStyle = '#1c1f28';
+    ctx.fillRect(trackX, by + 8, trackW, 6);
+    ctx.strokeStyle = '#33363f';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(trackX, by + 8, trackW, 6);
+    // Fill + knob
+    const val = s.get();
+    const t = Math.max(0, Math.min(1, (val - s.min) / (s.max - s.min)));
+    ctx.fillStyle = '#5a87c4';
+    ctx.fillRect(trackX, by + 8, trackW * t, 6);
+    ctx.fillStyle = sliderDrag && sliderDrag.slider === s ? '#fff' : '#88aadd';
+    ctx.beginPath();
+    ctx.arc(trackX + trackW * t, by + 11, knobR, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#0a0a0a';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 10px system-ui';
+    ctx.textAlign = 'right';
+    const display = s.step < 1 ? val.toFixed(1) : Math.round(val).toString();
+    ctx.fillText(display, x + w - padPanel - 4, by + 14);
+    ctx.textAlign = 'left';
+    by += sliderRowH + 2;
   }
 }
 
