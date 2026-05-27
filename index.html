@@ -535,16 +535,16 @@ const player = {
   weapon: 'pistol',
   secondary: 'katana',     // active utility slot; null = none
   lastSecondary: -10,      // game-time of last swing/throw for cooldown
-  // Dash is a permanent ability now — bound to Shift.
-  lastDash: -10,
-  dashCooldown: 1.4,
+  // Dash params used by the dash ability (motion only — cooldown lives in
+  // ABILITIES.dash.cooldown so the rest of the ability system can see it).
   dashDistance: 170,
   dashInvuln: 0.45,
   // EXP currency used by the upgrade tree (T key)
   exp: 0,
   // Unlockable abilities. Each key in player.abilities is a granted ability;
-  // abilityLast holds the last-use gameTime for cooldown checks.
-  abilities: {},
+  // abilityLast holds the last-use gameTime for cooldown checks. Dash is
+  // unlocked by default — the rest are earned via boss drops or cheats.
+  abilities: { dash: true },
   abilityLast: {},
   // Active-ability timers — checked by the systems they affect
   rageTimer: 0,        // damage multiplier window
@@ -818,9 +818,13 @@ const TREE_BRANCHES = Object.keys(UPGRADE_TREE);
 let treeLevels = { combat: 0, survival: 0, economy: 0 };
 let pendingBossDeath = null; // queued boss-kill nuke processed at tick boundary
 
-// ---------- Active abilities (unlockable, on a cooldown, bound to hotkeys) ----------
+// ---------- Active abilities (cycled with Tab / scroll wheel, fired with Shift) ----------
 const ABILITIES = {
-  bulletTime: { name: 'Bullet Time',     key: 'KeyZ', color: '#7ec8ff', cooldown: 28, duration: 5.0,
+  // Dash is now an ability too — unlocked by default, no hotkey of its own
+  // (Shift always fires the currently-selected ability, including dash).
+  dash:       { name: 'Dash',            key: 'Shift', color: '#5cffec', cooldown: 1.4, duration: 0,
+                desc: 'Quick teleport with i-frames' },
+  bulletTime: { name: 'Bullet Time',     key: 'KeyZ',  color: '#7ec8ff', cooldown: 28, duration: 5.0,
                 desc: 'Zombies move at 30% speed' },
   rage:       { name: 'Rage',            key: 'KeyX', color: '#d63030', cooldown: 32, duration: 6.0,
                 desc: 'Player damage x2' },
@@ -1956,9 +1960,8 @@ addEventListener('keydown', e => {
   if (e.code === 'KeyE' && nearbyGun) doSwapWeapon();
   if (e.code === 'KeyF' && nearbyBladeCrate) doSwapSecondary();
   if (e.code === 'KeyQ' && !inShop() && !pendingCards) useSecondary();
-  // Shift dashes AND fires the currently-selected unlocked ability
+  // Shift fires the currently-selected ability (dash is one of them)
   if ((e.code === 'ShiftLeft' || e.code === 'ShiftRight') && !inShop() && !pendingCards) {
-    tryDash();
     tryActivateSelected();
   }
   // Tab cycles forward through unlocked abilities (no-op if none unlocked)
@@ -2949,9 +2952,33 @@ function tryAbility(id) {
   const def = ABILITIES[id];
   if (!def) return;
   const last = player.abilityLast[id] || -Infinity;
-  if (gameTime - last < def.cooldown) return;
+  // Quickstep perk only shortens the dash cooldown
+  const cd = id === 'dash'
+    ? def.cooldown * (1 - (player.special.quickstep || 0))
+    : def.cooldown;
+  if (gameTime - last < cd) return;
   player.abilityLast[id] = gameTime;
-  if (id === 'bulletTime') {
+  if (id === 'dash') {
+    // Quick teleport in the aim direction with brief invulnerability.
+    const ang = Math.atan2(mouse.y - player.y, mouse.x - player.x);
+    const oldX = player.x, oldY = player.y;
+    const tx = player.x + Math.cos(ang) * player.dashDistance;
+    const ty = player.y + Math.sin(ang) * player.dashDistance;
+    player.x = Math.max(player.r, Math.min(W - player.r, tx));
+    player.y = Math.max(player.r, Math.min(H - player.r, ty));
+    player.invuln = Math.max(player.invuln, player.dashInvuln);
+    for (let k = 0; k < 10; k++) {
+      const t = k / 10;
+      particles.push({
+        x: oldX + (player.x - oldX) * t,
+        y: oldY + (player.y - oldY) * t,
+        vx: 0, vy: 0,
+        life: 0.32 - t * 0.22,
+        color: def.color,
+      });
+    }
+    shake(3);
+  } else if (id === 'bulletTime') {
     // Stamp the existing slow timer on every active zombie AND set a global
     // timer so newly-spawned zombies also feel it.
     bulletTimeTimer = Math.max(bulletTimeTimer, def.duration);
@@ -3051,6 +3078,10 @@ function tryActivateSelected() {
 
 // Per-ability sound effect played at activation.
 const SFX_ABILITIES = {
+  dash() {
+    // short whoosh
+    noise({ dur: 0.09, vol: 0.16, lowpass: 2200, hipass: 400 });
+  },
   bulletTime() {
     tone({ freq: 480, type: 'sine', dur: 0.4, vol: 0.22, sweep: -250 });
     tone({ freq: 120, type: 'sine', dur: 0.6, vol: 0.18, sweep: -40, delay: 0.05 });
@@ -3078,32 +3109,8 @@ const SFX_ABILITIES = {
   },
 };
 
-// Permanent dash — bound to Shift, gated by player.dashCooldown.
-function tryDash() {
-  if (pendingCards || inShop()) return;
-  const cd = player.dashCooldown * (1 - (player.special.quickstep || 0));
-  if (gameTime - player.lastDash < cd) return;
-  player.lastDash = gameTime;
-  const ang = Math.atan2(mouse.y - player.y, mouse.x - player.x);
-  const oldX = player.x, oldY = player.y;
-  const tx = player.x + Math.cos(ang) * player.dashDistance;
-  const ty = player.y + Math.sin(ang) * player.dashDistance;
-  player.x = Math.max(player.r, Math.min(W - player.r, tx));
-  player.y = Math.max(player.r, Math.min(H - player.r, ty));
-  player.invuln = Math.max(player.invuln, player.dashInvuln);
-  for (let k = 0; k < 10; k++) {
-    const t = k / 10;
-    particles.push({
-      x: oldX + (player.x - oldX) * t,
-      y: oldY + (player.y - oldY) * t,
-      vx: 0, vy: 0,
-      life: 0.32 - t * 0.22,
-      color: '#5cffec',
-    });
-  }
-  SFX.swing();
-  shake(3);
-}
+// (Dash is implemented via tryAbility('dash'); the old standalone tryDash
+// has been folded into the active-ability system.)
 
 // ----- Utility secondaries -----
 function useHeal(def) {
@@ -4217,12 +4224,12 @@ function hardReset() {
   player.special = {};
   player.specialLevels = {};
   player.exp = 0;
-  player.abilities = {};
+  player.abilities = { dash: true };
   player.abilityLast = {};
   player.rageTimer = 0;
   bulletTimeTimer = 0;
   homingBulletsTimer = 0;
-  selectedAbility = 0;
+  selectedAbility = ABILITY_KEYS.indexOf('dash'); // start cycle on dash
   abilityBooks.length = 0;
   treeLevels = { combat: 0, survival: 0, economy: 0 };
   rootOwned = {};
@@ -4253,7 +4260,6 @@ function hardReset() {
   player.weapon = 'pistol';
   player.secondary = 'katana';
   player.lastSecondary = -10;
-  player.lastDash = -10;
   kills = 0; deaths = 0; bestKills = 0; bestWave = 0;
   gameTime = 0;
   wave = 0; isBossWave = false; waveZombiesToSpawn = 0;
@@ -6407,9 +6413,14 @@ function drawSwapPrompt() {
 function drawStats() {
   const w = WEAPONS[player.weapon] || WEAPONS.pistol;
   const sec = player.secondary && SECONDARIES[player.secondary];
+  const unlockedAbilities = ABILITY_KEYS.filter(k => player.abilities[k]);
   const pw = 200;
-  // base 168 + 30 per active row (secondary, dash)
-  const ph = 168 + (sec ? 30 : 0) + 28;
+  // base 168 + secondary row + per-ability row + section header
+  const abilHeader = 16;
+  const abilRow = 22;
+  const ph = 168
+    + (sec ? 30 : 0)
+    + (unlockedAbilities.length ? abilHeader + unlockedAbilities.length * abilRow + 6 : 0);
   const px = W - pw - 14, py = H - ph - 14;
   ctx.fillStyle = 'rgba(10, 12, 18, 0.88)';
   ctx.fillRect(px, py, pw, ph);
@@ -6458,7 +6469,7 @@ function drawStats() {
   ctx.textAlign = 'left';
 
   // Secondary blade row + cooldown bar (only shown when one is equipped)
-  let rowY = py + ph - 32 - 28; // sit two rows above the panel's bottom
+  let rowY = py + 168;
   if (sec) {
     ctx.fillStyle = '#22252e';
     ctx.fillRect(px + 12, rowY - 8, pw - 24, 1);
@@ -6484,30 +6495,61 @@ function drawStats() {
     ctx.fillRect(bx, by, barW * ratio, barH);
     rowY += 28;
   }
-  // Dash row (always shown — it's a permanent ability)
-  {
+  // Abilities section — every unlocked ability with cooldown bar + selection
+  // highlight. Cycled via Tab / scroll wheel; fired with Shift.
+  if (unlockedAbilities.length) {
     ctx.fillStyle = '#22252e';
-    ctx.fillRect(px + 12, rowY - 8, pw - 24, 1);
-    ctx.fillStyle = '#5cffec';
-    ctx.fillRect(px + 12, rowY, 10, 10);
-    ctx.strokeStyle = '#1a1a1a';
-    ctx.strokeRect(px + 12, rowY, 10, 10);
-    ctx.fillStyle = '#fff';
-    ctx.font = 'bold 12px system-ui';
-    ctx.fillText('Dash', px + 28, rowY + 9);
-    ctx.fillStyle = '#888c95';
-    ctx.font = '10px system-ui';
-    ctx.textAlign = 'right';
-    ctx.fillText('Shift', px + pw - 12, rowY + 9);
+    ctx.fillRect(px + 12, rowY - 4, pw - 24, 1);
+    ctx.fillStyle = '#88aadd';
+    ctx.font = 'bold 10px system-ui';
     ctx.textAlign = 'left';
-    const elapsed = gameTime - player.lastDash;
-    const ratio = Math.max(0, Math.min(1, elapsed / player.dashCooldown));
-    const barW = pw - 24, barH = 5;
-    const bx = px + 12, by = rowY + 14;
-    ctx.fillStyle = '#1d1f26';
-    ctx.fillRect(bx, by, barW, barH);
-    ctx.fillStyle = ratio >= 1 ? '#5cffec' : '#5a5d66';
-    ctx.fillRect(bx, by, barW * ratio, barH);
+    ctx.fillText('ABILITIES  ·  Tab / scroll  ·  Shift', px + 12, rowY + 8);
+    rowY += abilHeader;
+    const curKey = ABILITY_KEYS[selectedAbility];
+    for (const id of unlockedAbilities) {
+      const def = ABILITIES[id];
+      const isSelected = id === curKey;
+      const cd = id === 'dash'
+        ? def.cooldown * (1 - (player.special.quickstep || 0))
+        : def.cooldown;
+      const elapsed = gameTime - (player.abilityLast[id] || -Infinity);
+      const ratio = Math.max(0, Math.min(1, elapsed / cd));
+      const ready = ratio >= 1;
+      // selection backdrop
+      if (isSelected) {
+        ctx.fillStyle = 'rgba(126, 200, 255, 0.10)';
+        ctx.fillRect(px + 8, rowY - 1, pw - 16, abilRow);
+        ctx.strokeStyle = '#7ec8ff';
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(px + 8, rowY - 1, pw - 16, abilRow);
+      }
+      // color swatch
+      ctx.fillStyle = def.color;
+      ctx.fillRect(px + 12, rowY + 2, 8, 8);
+      ctx.strokeStyle = '#1a1a1a';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(px + 12, rowY + 2, 8, 8);
+      // name
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 11px system-ui';
+      ctx.textAlign = 'left';
+      fitFont(def.name, pw - 80, 'bold 11px system-ui', 9);
+      ctx.fillText(def.name, px + 24, rowY + 9);
+      // hotkey hint — Shift fires the selected one
+      ctx.fillStyle = '#888c95';
+      ctx.font = '9px system-ui';
+      ctx.textAlign = 'right';
+      ctx.fillText(isSelected ? 'Shift' : (id === 'dash' ? '—' : def.key.slice(3)), px + pw - 12, rowY + 9);
+      ctx.textAlign = 'left';
+      // cooldown bar
+      const barW = pw - 28, barH = 3;
+      const bx = px + 14, by = rowY + 14;
+      ctx.fillStyle = '#1d1f26';
+      ctx.fillRect(bx, by, barW, barH);
+      ctx.fillStyle = ready ? def.color : '#5a5d66';
+      ctx.fillRect(bx, by, barW * ratio, barH);
+      rowY += abilRow;
+    }
   }
 }
 
@@ -6628,48 +6670,8 @@ function drawHud() {
       by += 14;
     }
   }
-  // Active abilities — small pills along the bottom-left. The currently
-  // selected ability (fired by Shift) is highlighted with a thicker border.
-  const unlocked = ABILITY_KEYS.filter(k => player.abilities[k]);
-  if (unlocked.length) {
-    const pw = 64, ph = 24, gap = 6;
-    let ax = 14, ay = H - 14 - ph;
-    const curKey = ABILITY_KEYS[selectedAbility];
-    for (const k of unlocked) {
-      const def = ABILITIES[k];
-      const last = player.abilityLast[k] || -Infinity;
-      const elapsed = gameTime - last;
-      const ratio = Math.max(0, Math.min(1, elapsed / def.cooldown));
-      const ready = ratio >= 1;
-      const isSelected = k === curKey;
-      // body
-      ctx.fillStyle = ready ? '#13261c' : '#13151c';
-      ctx.fillRect(ax, ay, pw, ph);
-      ctx.strokeStyle = isSelected ? '#fff' : (ready ? def.color : '#33363f');
-      ctx.lineWidth = isSelected ? 2.5 : (ready ? 2 : 1);
-      ctx.strokeRect(ax, ay, pw, ph);
-      // hotkey letter on the left
-      ctx.fillStyle = def.color;
-      ctx.font = 'bold 12px system-ui';
-      ctx.textAlign = 'left';
-      ctx.fillText(def.key.slice(3), ax + 6, ay + 16);
-      // short name
-      ctx.fillStyle = '#fff';
-      fitFont(def.name, pw - 26, 'bold 9px system-ui', 8);
-      ctx.fillText(def.name, ax + 20, ay + 12);
-      // cooldown bar at the bottom
-      ctx.fillStyle = '#1d1f26';
-      ctx.fillRect(ax + 20, ay + 16, pw - 26, 4);
-      ctx.fillStyle = ready ? def.color : '#5a5d66';
-      ctx.fillRect(ax + 20, ay + 16, (pw - 26) * ratio, 4);
-      ax += pw + gap;
-    }
-    // small footer hint
-    ctx.fillStyle = '#5a5d66';
-    ctx.font = '10px system-ui';
-    ctx.textAlign = 'left';
-    ctx.fillText('Tab cycles · Shift fires', 14, ay - 4);
-  }
+  // Abilities are now rendered inside the stats panel; the bottom-left pill
+  // bar that used to live here has been removed.
   // Picked perks (tomes)
   const perkKeys = Object.keys(player.specialLevels).filter(k => player.specialLevels[k] > 0);
   if (perkKeys.length) {
