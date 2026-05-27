@@ -2434,6 +2434,12 @@ function buyArsenalSecondary(id) {
   if (!entry || player.money < entry.cost) return;
   if (player.secondary === id) return;
   player.money -= entry.cost;
+  // Drop the old secondary so the buy mirrors the gun-buy behavior — it can
+  // be re-picked up or end up in storage when it expires.
+  const old = player.secondary;
+  if (old && SECONDARIES[old]) {
+    bladeCrates.push({ x: player.x, y: player.y, secondary: old, life: 60 });
+  }
   player.secondary = id;
   player.lastSecondary = -10;
   const def = SECONDARIES[id];
@@ -2650,6 +2656,13 @@ function doSwapSecondary() {
   // First-time info popup for the equipped secondary
   if (def) showTooltip('sec:' + nearbyBladeCrate.secondary, `${def.name} equipped`, def.desc || 'New secondary', def.color);
   const cx = nearbyBladeCrate.x, cy = nearbyBladeCrate.y;
+  // Drop the previously-held secondary at the player's feet so it can either
+  // be re-equipped or eventually decay into the storage box. Mirrors the
+  // primary-weapon swap behavior.
+  const old = player.secondary;
+  if (old && SECONDARIES[old]) {
+    bladeCrates.push({ x: player.x, y: player.y, secondary: old, life: 60 });
+  }
   player.secondary = nearbyBladeCrate.secondary;
   player.lastSecondary = -10;
   const idx = bladeCrates.indexOf(nearbyBladeCrate);
@@ -6553,6 +6566,75 @@ const TUTORIAL_PAGES = [
         'After each wave, pick 1 of 3 perk cards',
         'These stack across the whole run',
         'Cards stay until you die or hard-reset',
+      ] },
+    ],
+  },
+  {
+    title: 'Enemies',
+    accent: '#ff8060',
+    sections: [
+      { heading: 'Base Roster', lines: [
+        'Normal — green, balanced',
+        'Fast — red, low HP but quick',
+        'Tank — dark green, slow + chunky',
+      ] },
+      { heading: 'Specials', lines: [
+        'Exploder (orange) — detonates on death · AoE',
+        'Spitter (purple) — keeps range · throws goo',
+        'Healer (green pulse) — heals nearby zombies',
+        'Shielded (steel blue) — shield blocks front hits',
+        'Spawner (brown) — births fast hatchlings',
+      ] },
+      { heading: 'Mini-Bosses & Bosses', lines: [
+        'Mini-Boss every 5 waves — orange-eyed, armored',
+        'Nukes damage mini-bosses but cannot kill them',
+        'Boss every 20 waves — drops chest + ability book',
+        'Flank Shielded zombies — dash behind for full damage',
+      ] },
+    ],
+  },
+  {
+    title: 'Arena Events',
+    accent: '#ffd166',
+    sections: [
+      { heading: 'How They Work', lines: [
+        'Once per wave (chance), a random event fires',
+        'A banner at the top of the screen names the event',
+        'Boss waves are quiet — no events',
+      ] },
+      { heading: 'What Can Happen', lines: [
+        'Supply Drop — bonus money crate + pickup mid-arena',
+        'Horde Push — sudden burst of 6 zombies from one edge',
+        'Blackout — vision shrinks to a circle around you (10s)',
+        'Heal Zone — temporary healing pad spawns somewhere',
+      ] },
+    ],
+  },
+  {
+    title: 'Pets & Shop Tabs',
+    accent: '#80ffe0',
+    sections: [
+      { heading: 'Pets', lines: [
+        'Buy from the Pets tab in the shop (one of each)',
+        'Pets are IMMORTAL — they persist for the run',
+        'Dog — fast melee bite',
+        'Owl — flying scout · ranged shots',
+        'Combat Bot — slow heavy laser',
+        'Ghost — translucent · contact damage',
+        'Sentry Drone — orbits you · auto-fires',
+      ] },
+      { heading: 'Shop Tabs', lines: [
+        'Upgrades — permanent stat buys (same 1–9 list)',
+        'Arsenal — buy ANY primary / secondary for high $$',
+        'Pets — immortal companions',
+        'Storage — dropped items collect here when they expire',
+        'Mouse wheel scrolls inside the shop · click a tab to switch',
+      ] },
+      { heading: 'Storage Box', lines: [
+        'When a dropped weapon or utility crate times out,',
+        'it moves into the storage box (corner of the shop)',
+        'Open the Storage tab in the shop to retrieve any item',
+        'Holds 12 items · oldest falls off when full',
       ] },
     ],
   },
