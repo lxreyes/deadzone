@@ -3072,6 +3072,13 @@ c.addEventListener('mousedown', e => {
   // bottom-left and easily overlaps).
   const shopUIRect = { x: 18, y: H - 540 - 18, w: 360, h: 540 };
   const clickInShopUI = inShop() && pointInRect(mouse, shopUIRect);
+  // Guided-tutorial Skip button takes priority over everything else when
+  // active — lets the user bail out without clicking through menus.
+  if (guidedActive && guidedSkipRect && pointInRect(mouse, guidedSkipRect)) {
+    endGuidedTutorial();
+    SFX.uiClick && SFX.uiClick();
+    return;
+  }
   // cheats panel takes priority
   if (!clickInShopUI && cheatsHeaderRect && pointInRect(mouse, cheatsHeaderRect)) {
     cheatsDrag = { offX: mouse.x - cheatsPanel.x, offY: mouse.y - cheatsPanel.y, moved: false };
@@ -7972,6 +7979,7 @@ function render() {
   drawHud();
   drawStats();
   drawWaveBanner();
+  drawGuidedTutorialBanner();
   drawCheats();
   if (nearbyGun && nearbyGun.weapon !== player.weapon) drawSwapPrompt();
   if (nearbyBladeCrate && nearbyBladeCrate.secondary !== player.secondary) drawBladeSwapPrompt();
@@ -8306,6 +8314,7 @@ function drawMainMenu() {
   buttons.push({ id: 'play',     label: showResume ? 'New Game' : 'Play', hint: 'face the horde', accent: '#7ec8ff' });
   buttons.push({ id: 'training', label: 'Training Arena',                 hint: 'cheats unlocked · practice freely', accent: '#ffd166' });
   buttons.push({ id: 'tutorial', label: 'How to Play',                    hint: 'controls + systems', accent: '#5cffec' });
+  buttons.push({ id: 'guided',   label: 'Guided Tutorial',                hint: 'walks you through each action', accent: '#9bf07a' });
   buttons.push({ id: 'settings', label: 'Settings',                        hint: 'audio, sprites, more', accent: '#c47eff' });
   const totalH = buttons.length * bh + (buttons.length - 1) * gap;
   let by = H / 2 - 20;
@@ -8560,6 +8569,156 @@ const TUTORIAL_PAGES = [
   },
 ];
 
+// ---------- Guided (physical) tutorial ----------
+// A sequence of steps shown as a banner at the top of the gameplay screen.
+// Each step describes one action; gameplay continues normally and the step's
+// done(s) check polls every frame to decide when to advance. The trainingMode
+// flag is on so waves don't spawn — players control when they go.
+let guidedActive = false;
+let guidedStep = 0;
+let guidedScratch = {};
+let guidedFlashUntil = -1;
+
+const GUIDED_STEPS = [
+  {
+    text: 'Move with WASD or the arrow keys',
+    setup(s) { s.x0 = player.x; s.y0 = player.y; },
+    done(s) { return Math.hypot(player.x - s.x0, player.y - s.y0) > 90; },
+  },
+  {
+    text: 'Move your MOUSE to aim — your gun rotates with the cursor',
+    setup(s) { s.m0x = mouse.x; s.m0y = mouse.y; },
+    done(s) { return Math.hypot(mouse.x - s.m0x, mouse.y - s.m0y) > 80; },
+  },
+  {
+    text: 'Hold LEFT CLICK to fire your pistol',
+    setup(s) { s.t0 = gameTime; },
+    done(s) { return player.lastShot > s.t0; },
+  },
+  {
+    text: 'A zombie appeared! Take it down',
+    setup(s) { s.k0 = kills; spawnSpecific('normal'); },
+    done(s) { return kills > s.k0; },
+  },
+  {
+    text: 'Walk to the SHOP — top-right corner, dashed blue area',
+    done() { return inShop(); },
+  },
+  {
+    text: 'Press 1 to buy "Max HP +20" — $25 added to your wallet',
+    setup(s) { player.money = Math.max(player.money, 25); s.hp0 = player.maxHp; },
+    done(s) { return player.maxHp > s.hp0; },
+  },
+  {
+    text: 'Step out of the shop, then press SHIFT to DASH (i-frame teleport)',
+    setup(s) { s.t0 = gameTime; },
+    done(s) { return (player.abilityLast.dash || 0) > s.t0; },
+  },
+  {
+    text: 'Press Q (or right-click) to swing your secondary (Katana)',
+    setup(s) { s.t0 = gameTime; },
+    done(s) { return player.lastSecondary > s.t0; },
+  },
+  {
+    text: 'You\'re ready! Press SPACE on the menu to begin a real run',
+    setup(s) { s.t0 = gameTime; },
+    done(s) { return gameTime - s.t0 > 3; },
+  },
+];
+
+function startGuidedTutorial() {
+  hardReset();
+  trainingMode = true;
+  hasGame = true;
+  gameState = 'playing';
+  player.x = W / 2; player.y = H / 2;
+  guidedActive = true;
+  guidedStep = 0;
+  guidedScratch = {};
+  guidedFlashUntil = -1;
+  const first = GUIDED_STEPS[0];
+  if (first && first.setup) first.setup(guidedScratch);
+}
+
+function endGuidedTutorial() {
+  guidedActive = false;
+  guidedStep = 0;
+  guidedScratch = {};
+  trainingMode = false;
+  zombies.length = 0;
+  bullets.length = 0;
+  gameState = 'menu';
+}
+
+function updateGuidedTutorial() {
+  if (!guidedActive) return;
+  if (gameState !== 'playing') return;
+  const step = GUIDED_STEPS[guidedStep];
+  if (!step) { endGuidedTutorial(); return; }
+  try {
+    if (step.done(guidedScratch)) {
+      guidedFlashUntil = gameTime + 0.9;
+      guidedStep++;
+      guidedScratch = {};
+      const next = GUIDED_STEPS[guidedStep];
+      if (!next) { endGuidedTutorial(); return; }
+      if (next.setup) next.setup(guidedScratch);
+    }
+  } catch (err) {
+    // Bad step shouldn't kill the run — log and skip past it
+    logErrorInGame('[guided]', err);
+    guidedStep++;
+    guidedScratch = {};
+  }
+}
+
+// Banner drawn in the HUD layer when the guided tutorial is active.
+let guidedSkipRect = null;
+function drawGuidedTutorialBanner() {
+  if (!guidedActive) return;
+  const step = GUIDED_STEPS[guidedStep];
+  if (!step) return;
+  const w = 640, h = 80;
+  const x = (W - w) / 2, y = 14;
+  ctx.fillStyle = 'rgba(10, 14, 22, 0.92)';
+  ctx.fillRect(x, y, w, h);
+  ctx.strokeStyle = '#5cffec';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+  ctx.fillStyle = '#5cffec';
+  ctx.fillRect(x, y, 4, h);
+  // Header
+  ctx.fillStyle = '#5cffec';
+  ctx.font = 'bold 11px system-ui';
+  ctx.textAlign = 'center';
+  ctx.fillText(`GUIDED TUTORIAL · STEP ${guidedStep + 1} of ${GUIDED_STEPS.length}`, W / 2, y + 20);
+  // Instruction
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 17px system-ui';
+  fitFont(step.text, w - 40, 'bold 17px system-ui', 13);
+  ctx.fillText(step.text, W / 2, y + 50);
+  // Skip button at the right end
+  const sw = 64, sh = 26;
+  const sx = x + w - sw - 8, sy = y + h - sh - 8;
+  guidedSkipRect = { x: sx, y: sy, w: sw, h: sh };
+  const hover = pointInRect(mouse, guidedSkipRect);
+  ctx.fillStyle = hover ? '#33363f' : '#1c1f28';
+  ctx.fillRect(sx, sy, sw, sh);
+  ctx.strokeStyle = '#5a5d66';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(sx + 0.5, sy + 0.5, sw - 1, sh - 1);
+  ctx.fillStyle = '#dfe2e8';
+  ctx.font = 'bold 11px system-ui';
+  ctx.fillText('Skip', sx + sw / 2, sy + sh / 2 + 4);
+  // Brief checkmark flash between steps
+  if (gameTime < guidedFlashUntil) {
+    ctx.fillStyle = '#8be08b';
+    ctx.font = 'bold 14px system-ui';
+    ctx.fillText('✓ Step complete', W / 2, y + h + 22);
+  }
+  ctx.textAlign = 'left';
+}
+
 function drawTutorial() {
   ctx.fillStyle = 'rgba(6, 8, 12, 0.92)';
   ctx.fillRect(0, 0, W, H);
@@ -8661,10 +8820,11 @@ function drawPauseMenu() {
 
   const bw = 240, bh = 56, gap = 12;
   const items = [
-    { id: 'resume',   label: 'Resume',     accent: '#8be08b' },
-    { id: 'tutorial', label: 'How to Play', accent: '#5cffec' },
-    { id: 'settings', label: 'Settings',   accent: '#c47eff' },
-    { id: 'menu',     label: 'Main Menu',  accent: '#7ec8ff' },
+    { id: 'resume',   label: 'Resume',          accent: '#8be08b' },
+    { id: 'tutorial', label: 'How to Play',     accent: '#5cffec' },
+    { id: 'guided',   label: 'Guided Tutorial', accent: '#9bf07a' },
+    { id: 'settings', label: 'Settings',        accent: '#c47eff' },
+    { id: 'menu',     label: 'Main Menu',       accent: '#7ec8ff' },
   ];
   let by = H / 2 - 30;
   menuButtons = [];
@@ -9269,6 +9429,9 @@ function handleMenuAction(id) {
     case 'tutorial':
       gameState = 'tutorial';
       tutorialPage = 0;
+      break;
+    case 'guided':
+      startGuidedTutorial();
       break;
     case 'tutorial-next':
       tutorialPage = Math.min(TUTORIAL_PAGES.length - 1, tutorialPage + 1);
@@ -11478,6 +11641,7 @@ function tickBody() {
     updateDecals(dt);
     updateTooltips(dt);
     updateWave(dt);
+    updateGuidedTutorial();
     // decay visual effects only while playing
     if (shakeAmt > 0) {
       shakeAmt -= 60 * dt;
