@@ -2883,6 +2883,45 @@ function updateZombies(dt) {
   }
 }
 
+// Returns true if the segment (x0,y0)->(x1,y1) passes within `r` of (cx,cy).
+// Used by updateBullets to do swept collision so fast bullets can't tunnel
+// past zombies that they would have intersected mid-frame.
+function segmentHitsCircle(x0, y0, x1, y1, cx, cy, r) {
+  const dx = x1 - x0, dy = y1 - y0;
+  const len2 = dx*dx + dy*dy;
+  if (len2 === 0) {
+    const ex = cx - x0, ey = cy - y0;
+    return ex*ex + ey*ey < r*r;
+  }
+  // closest-point parameter clamped to the segment
+  let t = ((cx - x0) * dx + (cy - y0) * dy) / len2;
+  if (t < 0) t = 0; else if (t > 1) t = 1;
+  const px = x0 + t * dx, py = y0 + t * dy;
+  const ex = cx - px, ey = cy - py;
+  return ex*ex + ey*ey < r*r;
+}
+
+// Entry-point t along the segment where it first intersects the circle.
+// Returns null when the segment never enters the disc. Used to place
+// explosions / bounce origins at the actual impact instead of frame-end.
+function segmentCircleEntry(x0, y0, x1, y1, cx, cy, r) {
+  const dx = x1 - x0, dy = y1 - y0;
+  const fx = x0 - cx, fy = y0 - cy;
+  const a = dx*dx + dy*dy;
+  const bq = 2 * (fx*dx + fy*dy);
+  const cq = fx*fx + fy*fy - r*r;
+  if (a === 0) return cq < 0 ? 0 : null;
+  const disc = bq*bq - 4*a*cq;
+  if (disc < 0) return null;
+  const sd = Math.sqrt(disc);
+  const t1 = (-bq - sd) / (2*a);
+  const t2 = (-bq + sd) / (2*a);
+  if (t1 >= 0 && t1 <= 1) return t1;
+  if (t2 >= 0 && t2 <= 1) return t2;
+  if (t1 < 0 && t2 > 1) return 0; // segment starts already inside the circle
+  return null;
+}
+
 function updateBullets(dt) {
   for (let i = bullets.length - 1; i >= 0; i--) {
     const b = bullets[i];
@@ -2932,6 +2971,10 @@ function updateBullets(dt) {
         b.vy = Math.sin(newA) * sp;
       }
     }
+    // Stash where the bullet was at the start of this frame — swept collision
+    // checks the segment from prevX/prevY to b.x/b.y so fast bullets can't
+    // tunnel past zombies.
+    const prevX = b.x, prevY = b.y;
     // orbiter: position is computed from the player + orbit angle each frame
     if (b.bulletKind === 'orbit') {
       b.orbitAngle += b.orbitSpeed * dt;
@@ -2959,12 +3002,19 @@ function updateBullets(dt) {
     for (let j = zombies.length - 1; j >= 0; j--) {
       const z = zombies[j];
       if (b.hits.has(z)) continue;
-      const dx = z.x - b.x, dy = z.y - b.y;
       const rr = z.r + 3;
-      if (dx*dx + dy*dy < rr*rr) {
+      // Swept test: did the bullet's motion this frame pass within rr of the
+      // zombie? Catches fast bullets (railgun, kunai, chakram) that would
+      // otherwise hop right past in a single frame.
+      if (segmentHitsCircle(prevX, prevY, b.x, b.y, z.x, z.y, rr)) {
         if (b.explosive) {
-          explode(b.x, b.y, b.blastR, b.damage + b.blastDmg);
-          if (b.spawnChicks > 0) spawnChicks(b.x, b.y, b.spawnChicks, b.damage * 0.5);
+          // Place the explosion at the actual impact point along the segment
+          // so it lines up with the zombie instead of where the bullet ended.
+          const t = segmentCircleEntry(prevX, prevY, b.x, b.y, z.x, z.y, rr);
+          const hitX = t == null ? b.x : prevX + (b.x - prevX) * t;
+          const hitY = t == null ? b.y : prevY + (b.y - prevY) * t;
+          explode(hitX, hitY, b.blastR, b.damage + b.blastDmg);
+          if (b.spawnChicks > 0) spawnChicks(hitX, hitY, b.spawnChicks, b.damage * 0.5);
           consumed = true;
           break;
         }
