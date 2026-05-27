@@ -1730,6 +1730,12 @@ const mouse = { x: W / 2, y: H / 2, down: false };
 
 const skipBtn = { x: W / 2 - 80, y: H / 2 - 28, w: 160, h: 40 };
 function pointInRect(p, r) { return p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h; }
+// Validates that a value is a 7-char hex color ('#rrggbb'). Used by render
+// paths that concatenate alpha hex onto a color before passing to
+// addColorStop — anything other than a clean hex string makes that throw.
+function isHexColor(v) {
+  return typeof v === 'string' && v.length === 7 && v.charCodeAt(0) === 35;
+}
 
 // Draw a weapon at the local origin, pointing along +x. Caller handles transform.
 // Charged Bow held visual. Drawn in the player's facing-rotated frame so
@@ -7639,9 +7645,10 @@ function render() {
   // blade crates — hover to inspect, F or click to equip
   for (const c of bladeCrates) {
     const def = SECONDARIES[c.secondary];
-    // Defensive: if a crate somehow has an unknown secondary (legacy data,
-    // bad cheat input, etc.) skip rendering instead of crashing the frame.
-    if (!def || !def.color) continue;
+    // Defensive: skip crates whose secondary id is unknown, or whose color
+    // isn't a clean 7-char hex (anything else makes the alpha concatenation
+    // below blow up inside addColorStop).
+    if (!def || !isHexColor(def.color)) continue;
     const flash = c.life < 5 && Math.floor(c.life * 6) % 2 === 0;
     const bob = Math.sin(gameTime * 3 + c.x * 0.07) * 2;
     const cy = c.y + bob;
