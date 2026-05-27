@@ -725,6 +725,7 @@ const SPRITE_TARGETS = [
   { id: 'zombieFast',   label: 'Fast' },
   { id: 'zombieTank',   label: 'Tank' },
   { id: 'zombieBoss',   label: 'Boss' },
+  { id: 'cursor',       label: 'Cursor' },
 ];
 let customSprites = {}; // id → Uint8Array(256), one palette index per pixel
 let spriteEditorTarget = 'player';
@@ -4068,6 +4069,21 @@ function drawBuildToolbar() {
   }
 }
 
+// Shrink ctx.font until `text` fits within `maxW`. Mutates ctx.font in place.
+// Stops at minSize so labels never become unreadably small.
+function fitFont(text, maxW, fontTemplate, minSize = 10) {
+  ctx.font = fontTemplate;
+  if (ctx.measureText(text).width <= maxW) return;
+  const m = fontTemplate.match(/\b(\d+)px/);
+  if (!m) return;
+  let size = parseInt(m[1]);
+  while (size > minSize) {
+    size--;
+    ctx.font = fontTemplate.replace(/\b\d+px/, size + 'px');
+    if (ctx.measureText(text).width <= maxW) return;
+  }
+}
+
 // ----- Menus -----
 function drawMenuButton(rect, label, hint, accent) {
   const hover = pointInRect(mouse, rect);
@@ -4094,14 +4110,16 @@ function drawMenuButton(rect, label, hint, accent) {
     ctx.fillStyle = 'rgba(255, 255, 255, 0.06)';
     ctx.fillRect(rect.x + 6, rect.y + 1, rect.w - 8, 3);
   }
-  // label
+  // padding budget inside the button: 5px stripe + 8px left margin + 10px right margin
+  const inner = rect.w - 24;
+  // label — shrinks if too long for the button
   ctx.fillStyle = '#fff';
-  ctx.font = 'bold 22px system-ui';
+  fitFont(label, inner, 'bold 22px system-ui', 14);
   ctx.textAlign = 'center';
   ctx.fillText(label, rect.x + rect.w / 2 + 2, rect.y + (hint ? 34 : rect.h / 2 + 8));
   if (hint) {
     ctx.fillStyle = hover ? '#bcd6ff' : '#9aa0ab';
-    ctx.font = '12px system-ui';
+    fitFont(hint, inner, '12px system-ui', 9);
     ctx.fillText(hint, rect.x + rect.w / 2 + 2, rect.y + 54);
   }
   ctx.textAlign = 'left';
@@ -4630,12 +4648,12 @@ function drawCheats() {
       ctx.lineWidth = 1;
       ctx.strokeRect(rect.x, rect.y, rect.w, rect.h);
       ctx.fillStyle = '#fff';
-      ctx.font = 'bold 11px system-ui';
       ctx.textAlign = 'center';
       const labelStr = typeof c.label === 'function' ? c.label() : c.label;
-      ctx.fillText(
-        c.toggle ? `${labelStr}: ${isOn ? 'ON' : 'OFF'}` : labelStr,
-        rect.x + rect.w / 2, rect.y + 15);
+      const display = c.toggle ? `${labelStr}: ${isOn ? 'ON' : 'OFF'}` : labelStr;
+      // shrink long labels (e.g. "Gun: Chicken Launcher") so they never spill
+      fitFont(display, rect.w - 8, 'bold 11px system-ui', 9);
+      ctx.fillText(display, rect.x + rect.w / 2, rect.y + 15);
       by += btnH + 3;
     }
     by += 2;
@@ -5436,6 +5454,12 @@ function tick() {
   else if (gameState === 'paused') drawPauseMenu();
   else if (gameState === 'settings') drawSettingsMenu();
   if (trainingMode && gameState === 'playing') drawTrainingBanner();
+
+  // Custom-drawn cursor — last to draw, sits on top of every UI layer.
+  // System cursor is hidden when a custom one exists.
+  const wantCursor = hasCustomSprite('cursor') ? 'none' : 'crosshair';
+  if (c.style.cursor !== wantCursor) c.style.cursor = wantCursor;
+  if (hasCustomSprite('cursor')) drawCustomSprite('cursor', mouse.x, mouse.y, 28);
 
   requestAnimationFrame(tick);
 }
