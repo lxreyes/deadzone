@@ -1310,10 +1310,13 @@ let cheatsOpen = false;
 let godMode    = false;
 let cheatsHeaderRect = null;
 // Panel position is mutable now — the user can drag the header to move it.
-const cheatsPanel = { x: 14, y: 168, w: 420 };
+const cheatsPanel = { x: 14, y: 168, w: 420, h: null }; // h=null means auto-fit content
 let cheatsDrag = null;       // { offX, offY, moved } while dragging the panel
-let cheatsResize = null;     // { startX, startW } while dragging the right-edge handle
+let cheatsResize = null;     // { startX, startY, startW, startH } while dragging the corner handle
 let cheatsResizeRect = null; // hit-test for the resize handle (populated each frame)
+let cheatsScrollY = 0;       // scroll offset when content exceeds panel height
+let cheatsBodyRect = null;   // body region for wheel hit-testing
+let cheatsMaxScroll = 0;     // computed each frame
 let sliderDrag = null;       // { slider } while dragging a stat slider
 let slidersOpen = false;     // STATS section default-collapsed; user can expand
 let slidersHeaderRect = null;
@@ -2513,6 +2516,12 @@ c.addEventListener('wheel', e => {
     return;
   }
   if (gameState !== 'playing') return;
+  // Wheel inside the cheats panel scrolls its body when content overflows.
+  if (cheatsBodyRect && cheatsMaxScroll > 0 && pointInRect(mouse, cheatsBodyRect)) {
+    cheatsScrollY = Math.max(0, Math.min(cheatsMaxScroll, cheatsScrollY + e.deltaY));
+    e.preventDefault();
+    return;
+  }
   // Shop is open whenever the player stands inside the shop rect.
   if (inShop()) {
     shopScroll[shopTab] = Math.max(0, Math.min(shopMaxScroll, (shopScroll[shopTab] || 0) + e.deltaY));
@@ -2536,12 +2545,15 @@ c.addEventListener('mousemove', e => {
     cheatsPanel.x = Math.max(0, Math.min(W - cheatsPanel.w, mouse.x - cheatsDrag.offX));
     cheatsPanel.y = Math.max(0, Math.min(H - 30, mouse.y - cheatsDrag.offY));
   }
-  // resizing the cheats panel by dragging its right-edge handle
+  // resizing the cheats panel by dragging its bottom-right corner handle
   if (cheatsResize) {
-    const delta = mouse.x - cheatsResize.startX;
-    cheatsPanel.w = Math.max(220, Math.min(900, cheatsResize.startW + delta));
+    const dx = mouse.x - cheatsResize.startX;
+    const dy = mouse.y - cheatsResize.startY;
+    cheatsPanel.w = Math.max(220, Math.min(900, cheatsResize.startW + dx));
+    cheatsPanel.h = Math.max(100, Math.min(H - 20, cheatsResize.startH + dy));
     // Keep the panel inside the canvas after a resize
     cheatsPanel.x = Math.max(0, Math.min(W - cheatsPanel.w, cheatsPanel.x));
+    cheatsPanel.y = Math.max(0, Math.min(H - cheatsPanel.h, cheatsPanel.y));
   }
   // dragging a stat slider
   if (sliderDrag && sliderDrag.slider.rect) {
@@ -2614,9 +2626,14 @@ c.addEventListener('mousedown', e => {
     cheatsDrag = { offX: mouse.x - cheatsPanel.x, offY: mouse.y - cheatsPanel.y, moved: false };
     return;
   }
-  // resize handle on the right edge of an open cheats panel
+  // resize handle on the bottom-right corner of an open cheats panel
   if (cheatsOpen && cheatsResizeRect && pointInRect(mouse, cheatsResizeRect)) {
-    cheatsResize = { startX: mouse.x, startW: cheatsPanel.w };
+    cheatsResize = {
+      startX: mouse.x, startY: mouse.y,
+      startW: cheatsPanel.w,
+      // If h hasn't been set yet, snapshot the live panel height we just drew
+      startH: cheatsPanel.h != null ? cheatsPanel.h : (cheatsResizeRect.y + cheatsResizeRect.h - cheatsPanel.y + 4),
+    };
     return;
   }
   if (cheatsOpen) {
@@ -8252,7 +8269,18 @@ function drawCheats() {
       if (slidersOpen) bodyH += cheatSliders.length * (sliderRowH + 2) + 6;
     }
   }
-  const h = cheatsOpen ? header + bodyH + 6 : header;
+  // autoH is the panel height needed to show everything. If the user has
+  // explicitly set cheatsPanel.h via the corner handle, honor that and let
+  // overflow content scroll inside the body region.
+  const autoH = cheatsOpen ? header + bodyH + 6 : header;
+  const h = cheatsOpen
+    ? (cheatsPanel.h != null ? Math.max(header + 40, cheatsPanel.h) : autoH)
+    : header;
+  // Compute scroll bounds — if the user-set height is shorter than the auto
+  // content height, the difference is scrollable.
+  cheatsMaxScroll = Math.max(0, autoH - h);
+  if (cheatsScrollY > cheatsMaxScroll) cheatsScrollY = cheatsMaxScroll;
+  if (cheatsScrollY < 0) cheatsScrollY = 0;
   // Outer panel — slightly more opaque than before, single-pixel border
   ctx.fillStyle = 'rgba(10, 12, 18, 0.96)';
   ctx.fillRect(x, y, w, h);
@@ -8296,7 +8324,7 @@ function drawCheats() {
     return;
   }
 
-  // ---- Tab bar (general / weapons) ----
+  // ---- Tab bar (general / weapons) — drawn ABOVE the scrolling body ----
   const tabs = [
     { id: 'general', label: 'General', color: '#7ec8ff' },
     { id: 'weapons', label: 'Weapons', color: '#c47eff' },
@@ -8323,6 +8351,18 @@ function drawCheats() {
   ctx.textAlign = 'left';
 
   // ---- Vertical section list with horizontal-wrap items per open section ----
+  // Body clip: everything from below the tab bar to just above the corner
+  // resize handle. Anything beyond the visible body gets scrolled via cheatsScrollY.
+  const bodyClipTop = tabY + tabH + 4;
+  const bodyClipBottom = y + h - 6;
+  const bodyClipH = Math.max(0, bodyClipBottom - bodyClipTop);
+  cheatsBodyRect = { x, y: bodyClipTop, w, h: bodyClipH };
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(x + 1, bodyClipTop, w - 2, bodyClipH);
+  ctx.clip();
+  ctx.translate(0, -cheatsScrollY);
+
   let by = tabY + tabH + 4;
 
   // Clear hit-rects for sections on the inactive tab so clicks don't fire
@@ -8483,16 +8523,62 @@ function drawCheats() {
     for (const s of cheatSliders) s.rect = null;
   }
 
-  // Resize handle on the right edge — drag to resize the panel width.
-  // Two thin vertical bars hint at "grippable" without being noisy.
-  const handleW = 8;
-  cheatsResizeRect = { x: x + w - handleW, y: y + header + 2, w: handleW, h: h - header - 4 };
+  // End of the clipped + translated body region — restore canvas state so the
+  // resize handle and scrollbar draw at fixed screen positions.
+  ctx.restore();
+
+  // Shift every hit-test rect we just stored into screen-space (the translate
+  // moved drawing up by cheatsScrollY, but rects were captured at content y).
+  const sy = cheatsScrollY;
+  if (sy !== 0) {
+    for (const sec of visibleSections) {
+      if (sec.headerRect) sec.headerRect = { ...sec.headerRect, y: sec.headerRect.y - sy };
+      if (sec.open) {
+        for (const c of sec.items) {
+          if (c.rect) c.rect = { ...c.rect, y: c.rect.y - sy };
+        }
+      }
+    }
+    if (slidersHeaderRect) slidersHeaderRect = { ...slidersHeaderRect, y: slidersHeaderRect.y - sy };
+    for (const s of cheatSliders) {
+      if (s.rect) {
+        s.rect = { ...s.rect, y: s.rect.y - sy, trackY: s.rect.trackY - sy };
+      }
+    }
+  }
+  // Drop rects that scrolled entirely outside the visible body so clicks
+  // on hidden rows don't register.
+  const inBody = r => r && r.y + r.h > bodyClipTop && r.y < bodyClipBottom;
+  for (const sec of visibleSections) {
+    if (!inBody(sec.headerRect)) sec.headerRect = null;
+    if (sec.open) {
+      for (const c of sec.items) if (!inBody(c.rect)) c.rect = null;
+    }
+  }
+  if (!inBody(slidersHeaderRect)) slidersHeaderRect = null;
+  for (const s of cheatSliders) if (!inBody(s.rect)) s.rect = null;
+
+  // Scrollbar on the right edge when the body overflows
+  if (cheatsMaxScroll > 0) {
+    const trackX = x + w - 12, trackY = bodyClipTop + 2, trackH = bodyClipH - 4;
+    ctx.fillStyle = 'rgba(80, 90, 110, 0.18)';
+    ctx.fillRect(trackX, trackY, 3, trackH);
+    const thumbH = Math.max(24, trackH * (bodyClipH / (bodyClipH + cheatsMaxScroll)));
+    const thumbY = trackY + (trackH - thumbH) * (cheatsScrollY / cheatsMaxScroll);
+    ctx.fillStyle = '#5a87c4';
+    ctx.fillRect(trackX, thumbY, 3, thumbH);
+  }
+
+  // Corner resize handle (bottom-right) — drag to resize both width and height
+  const handleSize = 14;
+  cheatsResizeRect = { x: x + w - handleSize, y: y + h - handleSize, w: handleSize, h: handleSize };
   const hovHandle = pointInRect(mouse, cheatsResizeRect) || cheatsResize;
   ctx.fillStyle = hovHandle ? '#5a87c4' : '#3a3d46';
-  const barH = Math.max(20, cheatsResizeRect.h - 12);
-  const barY = cheatsResizeRect.y + (cheatsResizeRect.h - barH) / 2;
-  ctx.fillRect(cheatsResizeRect.x + 2, barY, 2, barH);
-  ctx.fillRect(cheatsResizeRect.x + 5, barY, 2, barH);
+  // Three diagonal dashes hint at "drag to resize"
+  for (let k = 0; k < 3; k++) {
+    const off = 3 + k * 3;
+    ctx.fillRect(cheatsResizeRect.x + cheatsResizeRect.w - off - 4, cheatsResizeRect.y + cheatsResizeRect.h - off, 4, 1.5);
+  }
 }
 
 // Convert a slider's mouse-x into its bound value, snapped to its step.
