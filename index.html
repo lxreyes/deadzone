@@ -693,6 +693,22 @@ const SECONDARIES = {
 };
 const SECONDARY_KEYS = Object.keys(SECONDARIES);
 
+// Visual sub-groupings used by both the shop Arsenal tab and the cheats
+// panel — so the weapon taxonomy lives in exactly one place. Declared here
+// because cheatSections (further down) spreads these arrays at module init.
+const PRIMARY_GROUPS = [
+  { name: 'Basic',   ids: ['shotgun', 'smg', 'rifle', 'rocket'] },
+  { name: 'Special', ids: ['plus', 'tesla', 'orbit', 'rail', 'twin', 'crossbow', 'flame'] },
+  { name: 'Gag',     ids: ['chicken', 'banana', 'duck'] },
+];
+const SECONDARY_GROUPS = [
+  { name: 'Melee',   ids: ['katana', 'warhammer'] },
+  { name: 'Thrown',  ids: ['kunai', 'chakram'] },
+  { name: 'Utility', ids: ['medkit', 'decoy', 'emp', 'bomb', 'healingField'] },
+  { name: 'Tomes',   ids: ['chickenTome', 'batTome', 'wolfTome', 'spiderTome', 'spiritTome'] },
+];
+const TRADER_PRIMARY_IDS = ['fish', 'pizza', 'toaster', 'confetti', 'mower', 'noodle'];
+
 // ---------- Pets (immortal companions, buy-once from the shop) ----------
 // Each pet follows the player and engages nearby zombies on its own. Unlike
 // secondaries' tome-summons, pets never decay and never die — they exist
@@ -2622,23 +2638,6 @@ function tryBuy(i) {
 // ---------- Arsenal (premium weapon shop) ----------
 // Per-item gold price for buying any primary/secondary from inside the shop.
 // Prices are deliberately high — this is the "I have money to burn" option.
-// Visual sub-groupings used by both the shop Arsenal tab and the cheats
-// panel — so the weapon taxonomy lives in exactly one place.
-const PRIMARY_GROUPS = [
-  { name: 'Basic',   ids: ['shotgun', 'smg', 'rifle', 'rocket'] },
-  { name: 'Special', ids: ['plus', 'tesla', 'orbit', 'rail', 'twin', 'crossbow', 'flame'] },
-  { name: 'Gag',     ids: ['chicken', 'banana', 'duck'] },
-];
-const SECONDARY_GROUPS = [
-  { name: 'Melee',   ids: ['katana', 'warhammer'] },
-  { name: 'Thrown',  ids: ['kunai', 'chakram'] },
-  { name: 'Utility', ids: ['medkit', 'decoy', 'emp', 'bomb', 'healingField'] },
-  { name: 'Tomes',   ids: ['chickenTome', 'batTome', 'wolfTome', 'spiderTome', 'spiritTome'] },
-];
-// Trader weapons are catalogued via PRIMARY_GROUPS too so the cheats panel
-// can offer a "Primary · Trader" section without duplicating the list.
-const TRADER_PRIMARY_IDS = ['fish', 'pizza', 'toaster', 'confetti', 'mower', 'noodle'];
-
 const ARSENAL_PRIMARIES = [
   { id: 'shotgun',  cost: 220 },
   { id: 'smg',      cost: 220 },
