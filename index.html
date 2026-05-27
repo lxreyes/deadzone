@@ -132,6 +132,14 @@ const SFX = {
       // soft ascending shimmer
       tone({ freq: 440, type: 'sine', dur: 0.18, vol: 0.18, sweep: 320 });
       tone({ freq: 660, type: 'sine', dur: 0.18, vol: 0.15, sweep: 320, delay: 0.04 });
+    } else if (weapon === 'rail') {
+      // charged bzzap, descending sweep
+      tone({ freq: 1200, type: 'sawtooth', dur: 0.25, vol: 0.28, sweep: -900 });
+      noise({ dur: 0.1, vol: 0.18, lowpass: 3000, hipass: 800 });
+    } else if (weapon === 'twin') {
+      // double click — two short snaps
+      tone({ freq: 540, type: 'square', dur: 0.05, vol: 0.18, sweep: -200 });
+      tone({ freq: 580, type: 'square', dur: 0.05, vol: 0.18, sweep: -200, delay: 0.025 });
     } else { // pistol
       tone({ freq: 540, type: 'square', dur: 0.06, vol: 0.22, sweep: -240 });
       noise({ dur: 0.04, vol: 0.16, lowpass: 1800 });
@@ -238,8 +246,12 @@ const WEAPONS = {
              bulletKind: 'lightning', chains: 3, chainRange: 150 },
   orbit:   { name: 'Orbiter',          shots: 3, spread: 0, damage: 0.7, fireRate: 0.5, bulletSpeed: 1.0, pierce: 99, life: 3.2, color: '#c47eff', tag: 'O',
              pattern: 'orbit', orbitRadius: 70, orbitSpeed: 4.5 },
+  rail:    { name: 'Railgun',          shots: 1, spread: 0, damage: 6.5, fireRate: 0.55, bulletSpeed: 5.5, pierce: 99, life: 0.5, color: '#9bf0ff', tag: '=',
+             bulletKind: 'rail' },
+  twin:    { name: 'Twin Pistols',     shots: 2, spread: 0.0, damage: 0.75, fireRate: 1.4, bulletSpeed: 1.0, pierce: 0, life: 1.4, color: '#ffb070', tag: '2',
+             pattern: 'twin' },
 };
-const DROPPABLE_WEAPONS = ['shotgun', 'smg', 'rifle', 'rocket', 'chicken', 'banana', 'duck', 'plus', 'tesla', 'orbit'];
+const DROPPABLE_WEAPONS = ['shotgun', 'smg', 'rifle', 'rocket', 'chicken', 'banana', 'duck', 'plus', 'tesla', 'orbit', 'rail', 'twin'];
 
 // Secondary blades — used with right-click or Q. Each has its own attack style.
 //   katana  = melee arc swing
@@ -259,6 +271,12 @@ const SECONDARIES = {
              hp: 120, life: 9 },
   emp:     { name: 'EMP',     kind: 'stun',      cooldown: 8.0, color: '#7ec8ff', tag: 'E',
              radius: 220, duration: 3.0 },
+  // A grimoire that summons a chicken swarm to chase the nearest zombie.
+  chickenTome: { name: 'Tome of Chickens', kind: 'summon', cooldown: 9.0, color: '#ffe066', tag: 'B',
+                 summon: 'chicken', count: 4 },
+  // Drop a glowing pad that regenerates HP while you stand on it.
+  healingField: { name: 'Healing Field', kind: 'field', cooldown: 14.0, color: '#5cd86b', tag: 'H',
+                  radius: 50, life: 8, hps: 12 },
 };
 const SECONDARY_KEYS = Object.keys(SECONDARIES);
 
@@ -278,6 +296,8 @@ const sparks  = []; // tesla lightning links — { x1, y1, x2, y2, life, max }
 const decoys  = []; // decoy lures — { x, y, hp, hpMax, life }
 const bladeCrates = []; // pickups that swap player.secondary — { x, y, secondary, life }
 const buildings = []; // placed buildings — { type, x, y, hp, hpMax, ... }
+const summons = [];   // friendly summoned units — { kind, x, y, vx, vy, hp, life, dmg }
+const healFields = [];// dropped healing pads — { x, y, r, life, max, hps }
 const decals  = []; // blood splats on the floor
 
 // Building catalog. Buildings snap to the 40px floor grid; w/h govern both
@@ -352,9 +372,11 @@ let cardRects = [null, null, null]; // cached for click hit-test
 
 // Visual / interaction state
 let nearbyGun = null;     // gun pickup the player is hovering over
+let nearbyBladeCrate = null; // secondary crate the player is hovering over
 let shakeAmt  = 0;        // current screen shake amplitude
 let flashRed  = 0;        // 0..1 red overlay alpha (decays)
 const swapBtn = { x: 0, y: 0, w: 140, h: 32 };  // positioned during draw
+const swapBladeBtn = { x: 0, y: 0, w: 140, h: 32 };
 
 // ---------- Cheats panel ----------
 // Hidden until the player types the unlock code (CHEAT_CODE) outside the shop.
@@ -585,6 +607,42 @@ function drawGun(weapon, r) {
       // tip
       ctx.fillStyle = '#6a4a0a';
       ctx.fillRect(x0 + r * 1.7, -3, 3, 3);
+      break;
+    }
+    case 'rail': {
+      // big slab body with a coil ramping toward a wide muzzle
+      ctx.fillStyle = '#1b2230';
+      ctx.fillRect(x0, -6, r * 1.6, 12);
+      ctx.strokeRect(x0, -6, r * 1.6, 12);
+      // emitter ring at the muzzle
+      ctx.fillStyle = w.color;
+      ctx.beginPath(); ctx.arc(x0 + r * 1.7, 0, 6, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = '#15151a';
+      ctx.lineWidth = 1.2;
+      ctx.stroke();
+      ctx.fillStyle = '#0a0a0a';
+      ctx.beginPath(); ctx.arc(x0 + r * 1.7, 0, 2.5, 0, Math.PI * 2); ctx.fill();
+      // diagonal coil lines
+      ctx.strokeStyle = w.color;
+      ctx.lineWidth = 1;
+      for (let k = 0; k < 3; k++) {
+        ctx.beginPath();
+        ctx.moveTo(x0 + 4 + k * 6, -5);
+        ctx.lineTo(x0 + 4 + k * 6 + 5, 5);
+        ctx.stroke();
+      }
+      break;
+    }
+    case 'twin': {
+      // two short pistol bodies stacked vertically
+      ctx.fillStyle = '#2e2e36';
+      ctx.fillRect(x0, -6, r * 0.9, 5);
+      ctx.fillRect(x0, 1, r * 0.9, 5);
+      ctx.strokeRect(x0, -6, r * 0.9, 5);
+      ctx.strokeRect(x0, 1, r * 0.9, 5);
+      ctx.fillStyle = w.color;
+      ctx.fillRect(x0 + r * 0.9, -5, 4, 3);
+      ctx.fillRect(x0 + r * 0.9, 2, 4, 3);
       break;
     }
     case 'plus': {
@@ -825,6 +883,27 @@ function drawBullet(b) {
     ctx.restore();
     return;
   }
+  if (b.bulletKind === 'rail') {
+    // long bright streak — render a tapered line behind the bullet
+    const ang = Math.atan2(b.vy, b.vx);
+    const sp = Math.hypot(b.vx, b.vy);
+    const len = Math.min(160, sp * 0.06);
+    ctx.save();
+    ctx.translate(b.x, b.y);
+    ctx.rotate(ang);
+    // outer glow
+    const grad = ctx.createLinearGradient(-len, 0, 0, 0);
+    grad.addColorStop(0, b.color + '00');
+    grad.addColorStop(0.8, b.color);
+    grad.addColorStop(1, '#ffffff');
+    ctx.fillStyle = grad;
+    ctx.fillRect(-len, -3, len, 6);
+    // core bolt
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(-len * 0.3, -1, len * 0.3 + 4, 2);
+    ctx.restore();
+    return;
+  }
   if (b.bulletKind === 'lightning') {
     // jittery zigzag bullet
     const ang = Math.atan2(b.vy, b.vx);
@@ -976,6 +1055,7 @@ addEventListener('keydown', e => {
     e.preventDefault();
   }
   if (e.code === 'KeyE' && nearbyGun) doSwapWeapon();
+  if (e.code === 'KeyF' && nearbyBladeCrate) doSwapSecondary();
   if (e.code === 'KeyQ' && !inShop() && !pendingCards) useSecondary();
   if ((e.code === 'ShiftLeft' || e.code === 'ShiftRight') && !inShop() && !pendingCards) tryDash();
   // build-mode digit selection takes priority over shop/cheats
@@ -1071,6 +1151,10 @@ c.addEventListener('mousedown', e => {
   }
   if (nearbyGun && nearbyGun.weapon !== player.weapon && pointInRect(mouse, swapBtn)) {
     doSwapWeapon();
+    return;
+  }
+  if (nearbyBladeCrate && nearbyBladeCrate.secondary !== player.secondary && pointInRect(mouse, swapBladeBtn)) {
+    doSwapSecondary();
     return;
   }
   mouse.down = true;
@@ -1204,25 +1288,38 @@ function tryDropBladeCrate(z) {
 }
 
 function updateBladeCrates(dt) {
+  nearbyBladeCrate = null;
+  let bestD2 = 60 * 60; // hover radius
   for (let i = bladeCrates.length - 1; i >= 0; i--) {
     const c = bladeCrates[i];
     c.life -= dt;
     if (c.life <= 0) { bladeCrates.splice(i, 1); continue; }
     const dx = player.x - c.x, dy = player.y - c.y;
-    if (dx*dx + dy*dy < (player.r + 16) * (player.r + 16)) {
-      const def = SECONDARIES[c.secondary];
-      player.secondary = c.secondary;
-      player.lastSecondary = -10;
-      floaters.push({ x: c.x, y: c.y - 22, text: `Equipped ${def.name}`, life: 2.0, color: def.color });
-      for (let k = 0; k < 16; k++) {
-        const a = Math.random() * Math.PI * 2;
-        const s = 100 + Math.random() * 180;
-        particles.push({ x: c.x, y: c.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s, life: 0.5, color: def.color });
-      }
-      SFX.swap();
-      bladeCrates.splice(i, 1);
-    }
+    const d2 = dx*dx + dy*dy;
+    if (d2 < bestD2) { bestD2 = d2; nearbyBladeCrate = c; }
   }
+}
+
+// Swap the player's secondary to the nearby crate's blade. Mirrors doSwapWeapon
+// in spirit — confirm prompt, particle burst, drop the old one (for now we just
+// discard the previous secondary since they're free-to-find).
+function doSwapSecondary() {
+  if (!nearbyBladeCrate) return;
+  if (nearbyBladeCrate.secondary === player.secondary) return;
+  const def = SECONDARIES[nearbyBladeCrate.secondary];
+  const cx = nearbyBladeCrate.x, cy = nearbyBladeCrate.y;
+  player.secondary = nearbyBladeCrate.secondary;
+  player.lastSecondary = -10;
+  const idx = bladeCrates.indexOf(nearbyBladeCrate);
+  if (idx >= 0) bladeCrates.splice(idx, 1);
+  floaters.push({ x: cx, y: cy - 22, text: `Equipped ${def.name}`, life: 2.0, color: def.color });
+  for (let k = 0; k < 18; k++) {
+    const a = Math.random() * Math.PI * 2;
+    const s = 100 + Math.random() * 200;
+    particles.push({ x: cx, y: cy, vx: Math.cos(a)*s, vy: Math.sin(a)*s, life: 0.5, color: def.color });
+  }
+  SFX.swap();
+  nearbyBladeCrate = null;
 }
 
 function dropCoinsFor(z) {
@@ -1439,6 +1536,9 @@ function tryShoot(nowSec) {
     angles = [];
     const n = w.shots;
     for (let i = 0; i < n; i++) angles.push(baseAng + (i / n) * Math.PI * 2);
+  } else if (w.pattern === 'twin') {
+    // two parallel shots — same angle, offset perpendicular to aim
+    angles = [baseAng, baseAng];
   } else {
     // standard fan spread used by every original weapon
     angles = [];
@@ -1447,12 +1547,20 @@ function tryShoot(nowSec) {
     }
   }
 
+  let twinIdx = 0;
   for (const a of angles) {
     const isCrit = !!(player.special.crit && Math.random() < player.special.crit);
     const dmg = isCrit ? dmgBase * 2 : dmgBase;
     const isOrbit = w.pattern === 'orbit';
-    const sx = isOrbit ? player.x + Math.cos(a) * w.orbitRadius : player.x + Math.cos(a) * (player.r + 4);
-    const sy = isOrbit ? player.y + Math.sin(a) * w.orbitRadius : player.y + Math.sin(a) * (player.r + 4);
+    // perpendicular offset for the twin pistols
+    const twinOff = (w.pattern === 'twin') ? ((twinIdx++ === 0) ? -6 : 6) : 0;
+    const perpX = -Math.sin(a) * twinOff, perpY = Math.cos(a) * twinOff;
+    const sx = isOrbit
+      ? player.x + Math.cos(a) * w.orbitRadius
+      : player.x + Math.cos(a) * (player.r + 4) + perpX;
+    const sy = isOrbit
+      ? player.y + Math.sin(a) * w.orbitRadius
+      : player.y + Math.sin(a) * (player.r + 4) + perpY;
     bullets.push({
       x: sx, y: sy,
       vx: isOrbit ? 0 : Math.cos(a) * bSpeed,
@@ -1505,6 +1613,103 @@ function useSecondary() {
   else if (def.kind === 'heal')   useHeal(def);
   else if (def.kind === 'decoy')  useDecoy(def);
   else if (def.kind === 'stun')   useStun(def);
+  else if (def.kind === 'summon') useSummon(def);
+  else if (def.kind === 'field')  useField(def);
+}
+
+function useSummon(def) {
+  if (def.summon === 'chicken') {
+    for (let i = 0; i < def.count; i++) {
+      const a = Math.random() * Math.PI * 2;
+      summons.push({
+        kind: 'chicken',
+        x: player.x + Math.cos(a) * 18,
+        y: player.y + Math.sin(a) * 18,
+        vx: Math.cos(a) * 80, vy: Math.sin(a) * 80,
+        hp: 24, hpMax: 24,
+        life: 12,
+        dmg: 22,        // damage per second on contact
+        speed: 165,
+      });
+    }
+  }
+  // poof of feathers when the tome opens
+  for (let k = 0; k < 22; k++) {
+    const a = Math.random() * Math.PI * 2;
+    const s = 100 + Math.random() * 180;
+    particles.push({ x: player.x, y: player.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s, life: 0.5, color: k % 2 ? '#fff5b8' : '#ffe066' });
+  }
+  SFX.chestOpen();
+}
+
+function useField(def) {
+  healFields.push({ x: player.x, y: player.y, r: def.radius, life: def.life, max: def.life, hps: def.hps, color: def.color });
+  // spawn ring of soothing particles
+  for (let i = 0; i < 20; i++) {
+    const a = (i / 20) * Math.PI * 2;
+    particles.push({ x: player.x, y: player.y, vx: Math.cos(a)*120, vy: Math.sin(a)*120, life: 0.6, color: def.color });
+  }
+  SFX.pickup();
+}
+
+function updateSummons(dt) {
+  for (let i = summons.length - 1; i >= 0; i--) {
+    const s = summons[i];
+    s.life -= dt;
+    if (s.life <= 0 || s.hp <= 0) {
+      for (let k = 0; k < 10; k++) {
+        const a = Math.random() * Math.PI * 2;
+        const sp = 60 + Math.random() * 140;
+        particles.push({ x: s.x, y: s.y, vx: Math.cos(a)*sp, vy: Math.sin(a)*sp, life: 0.5, color: k % 2 ? '#fff5b8' : '#ffe066' });
+      }
+      summons.splice(i, 1);
+      continue;
+    }
+    // home toward the nearest zombie; if none, wander idly
+    let near = null, bd2 = Infinity;
+    for (const z of zombies) {
+      const dx = z.x - s.x, dy = z.y - s.y;
+      const d2 = dx*dx + dy*dy;
+      if (d2 < bd2) { bd2 = d2; near = z; }
+    }
+    if (near) {
+      const dx = near.x - s.x, dy = near.y - s.y;
+      const d = Math.hypot(dx, dy) || 1;
+      s.vx = (dx / d) * s.speed;
+      s.vy = (dy / d) * s.speed;
+      s.x += s.vx * dt;
+      s.y += s.vy * dt;
+      // pecking contact damage
+      if (d < near.r + 9) {
+        near.hp -= s.dmg * dt;
+        if (near.hp <= 0) {
+          const idx = zombies.indexOf(near);
+          if (idx >= 0) { killZombie(near); zombies.splice(idx, 1); }
+        }
+      }
+    } else {
+      // idle wander
+      s.x += s.vx * dt;
+      s.y += s.vy * dt;
+      s.vx *= 0.95;
+      s.vy *= 0.95;
+    }
+    s.x = Math.max(6, Math.min(W - 6, s.x));
+    s.y = Math.max(6, Math.min(H - 6, s.y));
+  }
+}
+
+function updateHealFields(dt) {
+  for (let i = healFields.length - 1; i >= 0; i--) {
+    const f = healFields[i];
+    f.life -= dt;
+    if (f.life <= 0) { healFields.splice(i, 1); continue; }
+    // heal the player if standing on the pad
+    const dx = player.x - f.x, dy = player.y - f.y;
+    if (dx*dx + dy*dy < f.r * f.r) {
+      player.hp = Math.min(player.maxHp, player.hp + f.hps * dt);
+    }
+  }
 }
 
 // Permanent dash — bound to Shift, gated by player.dashCooldown.
@@ -2501,6 +2706,8 @@ function hardReset() {
   buildings.length = 0;
   buildMode = false;
   bladeCrates.length = 0;
+  summons.length = 0;
+  healFields.length = 0;
   decals.length = 0;
   shakeAmt = 0; flashRed = 0; nearbyGun = null;
   player.weapon = 'pistol';
@@ -2544,6 +2751,29 @@ function render() {
     ctx.beginPath(); ctx.arc(d.x, d.y, d.r, 0, Math.PI*2); ctx.fill();
   }
   ctx.globalAlpha = 1;
+
+  // healing-field pads — drawn on the floor under entities
+  for (const f of healFields) {
+    const t = f.life / f.max;
+    const pulse = 1 + Math.sin(gameTime * 5) * 0.06;
+    ctx.save();
+    ctx.globalAlpha = 0.55 * t;
+    const grad = ctx.createRadialGradient(f.x, f.y, 4, f.x, f.y, f.r * pulse);
+    grad.addColorStop(0, f.color);
+    grad.addColorStop(1, f.color + '00');
+    ctx.fillStyle = grad;
+    ctx.beginPath(); ctx.arc(f.x, f.y, f.r * pulse, 0, Math.PI*2); ctx.fill();
+    ctx.globalAlpha = t;
+    ctx.strokeStyle = f.color;
+    ctx.lineWidth = 2;
+    ctx.setLineDash([6, 4]);
+    ctx.beginPath(); ctx.arc(f.x, f.y, f.r, 0, Math.PI*2); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = f.color;
+    ctx.fillRect(f.x - 2, f.y - 8, 4, 16);
+    ctx.fillRect(f.x - 8, f.y - 2, 16, 4);
+    ctx.restore();
+  }
 
   // banana slicks
   for (const s of slicks) {
@@ -2709,6 +2939,43 @@ function render() {
   // bullets
   for (const b of bullets) {
     drawBullet(b);
+  }
+
+  // chicken summons (drawn above bullets so they're easy to track)
+  for (const s of summons) {
+    if (s.kind === 'chicken') {
+      const ang = Math.atan2(s.vy, s.vx);
+      ctx.save();
+      ctx.translate(s.x, s.y);
+      ctx.rotate(ang);
+      // body
+      ctx.fillStyle = '#fff5b8';
+      ctx.beginPath(); ctx.ellipse(0, 0, 7, 5.5, 0, 0, Math.PI*2); ctx.fill();
+      ctx.strokeStyle = '#15151a';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      // comb
+      ctx.fillStyle = '#d63030';
+      ctx.beginPath(); ctx.arc(-1, -5, 1.5, 0, Math.PI*2);
+      ctx.arc(1, -5, 1.5, 0, Math.PI*2); ctx.fill();
+      // beak
+      ctx.fillStyle = '#ff9d3a';
+      ctx.beginPath();
+      ctx.moveTo(6, -1); ctx.lineTo(11, 0); ctx.lineTo(6, 2); ctx.closePath();
+      ctx.fill();
+      // eye
+      ctx.fillStyle = '#1a1a1a';
+      ctx.beginPath(); ctx.arc(3, -1, 0.9, 0, Math.PI*2); ctx.fill();
+      ctx.restore();
+      // life ring
+      if (s.life < 4) {
+        ctx.strokeStyle = '#ffe066';
+        ctx.lineWidth = 1.5;
+        ctx.globalAlpha = 0.4;
+        ctx.beginPath(); ctx.arc(s.x, s.y, 10, 0, Math.PI*2); ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
+    }
   }
 
   // tesla chain sparks — jagged white-on-blue lines, drawn briefly
@@ -2900,14 +3167,15 @@ function render() {
     ctx.textAlign = 'left';
   }
 
-  // blade crates — swap player.secondary on contact
+  // blade crates — hover to inspect, F or click to equip
   for (const c of bladeCrates) {
     const def = SECONDARIES[c.secondary];
     const flash = c.life < 5 && Math.floor(c.life * 6) % 2 === 0;
     const bob = Math.sin(gameTime * 3 + c.x * 0.07) * 2;
     const cy = c.y + bob;
-    // aura
-    const auraR = 28;
+    const highlighted = c === nearbyBladeCrate;
+    // aura — stronger when nearby
+    const auraR = highlighted ? 36 : 28;
     const aura = ctx.createRadialGradient(c.x, cy, 4, c.x, cy, auraR);
     aura.addColorStop(0, def.color + 'cc');
     aura.addColorStop(1, def.color + '00');
@@ -2917,8 +3185,8 @@ function render() {
     const bw = 28, bh = 22;
     ctx.fillStyle = '#3a2410';
     ctx.fillRect(c.x - bw/2, cy - bh/2, bw, bh);
-    ctx.strokeStyle = '#1a0e04';
-    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = highlighted ? '#fff' : '#1a0e04';
+    ctx.lineWidth = highlighted ? 3 : 1.5;
     ctx.strokeRect(c.x - bw/2, cy - bh/2, bw, bh);
     // ribbon
     ctx.fillStyle = flash ? '#fff' : def.color;
@@ -3051,6 +3319,7 @@ function render() {
   drawWaveBanner();
   drawCheats();
   if (nearbyGun && nearbyGun.weapon !== player.weapon) drawSwapPrompt();
+  if (nearbyBladeCrate && nearbyBladeCrate.secondary !== player.secondary) drawBladeSwapPrompt();
   if (inShop()) drawShop();
   drawBuildToolbar();
   drawCardPicker(); // sits on top of everything when active
@@ -3333,6 +3602,85 @@ function sliderValueAt(s, mx) {
   v = Math.round(v / s.step) * s.step;
   if (s.step < 1) v = parseFloat(v.toFixed(2));
   return v;
+}
+
+function drawBladeSwapPrompt() {
+  const cur = player.secondary ? SECONDARIES[player.secondary] : null;
+  const newSec = SECONDARIES[nearbyBladeCrate.secondary];
+  if (!newSec) return;
+  const w = 460, h = 124;
+  const x = (W - w) / 2;
+  // sit just above the gun-swap prompt area (or wherever else is free)
+  const y = H - h - 160;
+  ctx.fillStyle = 'rgba(10, 12, 18, 0.92)';
+  ctx.fillRect(x, y, w, h);
+  ctx.strokeStyle = newSec.color;
+  ctx.lineWidth = 2;
+  ctx.strokeRect(x, y, w, h);
+
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 13px system-ui';
+  ctx.textAlign = 'center';
+  ctx.fillText('SECONDARY CRATE', x + w / 2, y + 20);
+
+  const drawSlot = (xs, ys, def, label, align) => {
+    if (!def) {
+      ctx.fillStyle = '#33363f';
+      ctx.fillRect(xs, ys, 28, 28);
+      ctx.strokeStyle = '#1a1a1a';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(xs, ys, 28, 28);
+      ctx.fillStyle = '#888c95';
+      ctx.font = 'italic 11px system-ui';
+      ctx.textAlign = 'left';
+      ctx.fillText('(none)', xs + 36, ys + 18);
+      return;
+    }
+    ctx.fillStyle = def.color;
+    ctx.fillRect(xs, ys, 28, 28);
+    ctx.strokeStyle = '#1a1a1a';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(xs, ys, 28, 28);
+    ctx.fillStyle = '#1a1a1a';
+    ctx.font = 'bold 15px system-ui';
+    ctx.textAlign = 'center';
+    ctx.fillText(def.tag, xs + 14, ys + 20);
+    ctx.fillStyle = '#888c95';
+    ctx.font = '10px system-ui';
+    ctx.textAlign = align;
+    ctx.fillText(label, align === 'left' ? xs : xs + 28, ys - 4);
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 13px system-ui';
+    ctx.fillText(def.name, align === 'left' ? xs + 36 : xs - 8, ys + 18);
+  };
+  drawSlot(x + 24, y + 46, cur, 'CURRENT', 'left');
+  drawSlot(x + w - 24 - 28, y + 46, newSec, 'NEW', 'right');
+
+  ctx.fillStyle = '#7ec8ff';
+  ctx.font = 'bold 22px system-ui';
+  ctx.textAlign = 'center';
+  ctx.fillText('→', x + w / 2, y + 64);
+
+  // confirm button
+  swapBladeBtn.w = 130; swapBladeBtn.h = 30;
+  swapBladeBtn.x = x + w - swapBladeBtn.w - 14;
+  swapBladeBtn.y = y + h - swapBladeBtn.h - 10;
+  const hover = pointInRect(mouse, swapBladeBtn);
+  ctx.fillStyle = hover ? '#3a3a7a' : '#2a2a4a';
+  ctx.fillRect(swapBladeBtn.x, swapBladeBtn.y, swapBladeBtn.w, swapBladeBtn.h);
+  ctx.strokeStyle = hover ? '#9aa0ff' : newSec.color;
+  ctx.lineWidth = 2;
+  ctx.strokeRect(swapBladeBtn.x, swapBladeBtn.y, swapBladeBtn.w, swapBladeBtn.h);
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 13px system-ui';
+  ctx.textAlign = 'center';
+  ctx.fillText('[F] Equip', swapBladeBtn.x + swapBladeBtn.w / 2, swapBladeBtn.y + 20);
+
+  ctx.fillStyle = '#888c95';
+  ctx.font = '11px system-ui';
+  ctx.textAlign = 'left';
+  ctx.fillText('walk away to keep current', x + 14, y + h - 18);
+  ctx.textAlign = 'left';
 }
 
 function drawSwapPrompt() {
@@ -3968,6 +4316,8 @@ function tick() {
   updateDecoys(dt);
   updateBuildings(dt);
   updateBladeCrates(dt);
+  updateSummons(dt);
+  updateHealFields(dt);
   updateParticles(dt);
   updateDecals(dt);
   updateWave(dt);
