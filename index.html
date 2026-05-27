@@ -2781,7 +2781,7 @@ addEventListener('keydown', e => {
     if (gameState === 'playing')       { gameState = 'paused'; clearKeys(); SFX.uiClick(); updateMusicForState(); return; }
     if (gameState === 'paused')        { gameState = 'playing'; SFX.uiClick(); updateMusicForState(); return; }
     if (gameState === 'settings')      { gameState = hasGame ? 'paused' : 'menu'; SFX.uiClick(); updateMusicForState(); return; }
-    if (gameState === 'tutorial')      { gameState = 'menu'; SFX.uiClick(); return; }
+    if (gameState === 'tutorial')      { gameState = hasGame ? 'paused' : 'menu'; SFX.uiClick(); return; }
     if (gameState === 'tree')          { gameState = 'playing'; SFX.uiClick(); return; }
     if (gameState === 'menu')          return;
   }
@@ -3350,6 +3350,38 @@ function killZombie(z) {
   tryDropGun(z);
   tryDropPickup(z);
   tryDropBladeCrate(z);
+  // Mini-bosses are mid-tier elites — give them a more generous drop kit
+  // than normal zombies (but well below boss-tier so real bosses still feel
+  // special). Guaranteed pickup + 2 bonus pickup rolls + ~50% gun + ~60%
+  // utility crate + a small coin shower on top.
+  if (z.isMiniBoss) {
+    spawnPickupAt(z.x, z.y, PICKUP_KEYS[Math.floor(Math.random() * PICKUP_KEYS.length)]);
+    for (let k = 0; k < 2; k++) {
+      if (Math.random() < 0.55) {
+        const a = Math.random() * Math.PI * 2;
+        const px = z.x + Math.cos(a) * 16, py = z.y + Math.sin(a) * 16;
+        spawnPickupAt(px, py, PICKUP_KEYS[Math.floor(Math.random() * PICKUP_KEYS.length)]);
+      }
+    }
+    if (Math.random() < 0.5) {
+      const w = DROPPABLE_WEAPONS[Math.floor(Math.random() * DROPPABLE_WEAPONS.length)];
+      dropGunAt(z.x, z.y, w, 30);
+    }
+    if (Math.random() < 0.6) {
+      const keys = Object.keys(SECONDARIES);
+      const pick = keys[Math.floor(Math.random() * keys.length)];
+      bladeCrates.push({ x: z.x, y: z.y, secondary: pick, life: 30 });
+      dropBurst(z.x, z.y, SECONDARIES[pick].color, 14);
+    }
+    // Coin shower scaled to the wave so it feels like a real reward
+    const coinPile = 8 + Math.floor(wave * 0.8);
+    for (let k = 0; k < coinPile; k++) {
+      const a = Math.random() * Math.PI * 2;
+      const sp = 80 + Math.random() * 220;
+      coins.push({ x: z.x, y: z.y, vx: Math.cos(a)*sp, vy: Math.sin(a)*sp, value: 4 + Math.floor(Math.random() * 6), life: 14 });
+    }
+    dropBurst(z.x, z.y, '#ffa040', 26);
+  }
   if (player.special.vampire) {
     player.hp = Math.min(player.maxHp, player.hp + player.special.vampire);
   }
@@ -7539,6 +7571,9 @@ function render() {
   // blade crates — hover to inspect, F or click to equip
   for (const c of bladeCrates) {
     const def = SECONDARIES[c.secondary];
+    // Defensive: if a crate somehow has an unknown secondary (legacy data,
+    // bad cheat input, etc.) skip rendering instead of crashing the frame.
+    if (!def || !def.color) continue;
     const flash = c.life < 5 && Math.floor(c.life * 6) % 2 === 0;
     const bob = Math.sin(gameTime * 3 + c.x * 0.07) * 2;
     const cy = c.y + bob;
@@ -8217,9 +8252,10 @@ const TUTORIAL_PAGES = [
     accent: '#7ec8ff',
     sections: [
       { heading: 'Movement & Aim', lines: [
-        'WASD or arrow keys to move',
+        'WASD to move (arrows too in single-player)',
         'Mouse aims your weapon',
         'Hold Left Click to fire your primary',
+        'Settings has Auto-Shoot if you want hands-free fire',
       ] },
       { heading: 'Survive the Waves', lines: [
         'Each wave spawns more (and tougher) zombies',
@@ -8267,10 +8303,12 @@ const TUTORIAL_PAGES = [
       ] },
       { heading: 'Types', lines: [
         'Katana / Warhammer — melee swings around you',
-        'Kunai / Chakram — thrown projectiles',
+        'Kunai / Chakram — thrown projectiles · chakram tracks cursor',
+        'Charged Bow — HOLD to draw · longer draw = huge damage',
+        'Bomb Launcher — arc-throws · explodes on landing',
+        'Mystery Potion — random 1-of-10 nasty effect in a splash',
         'Medkit / Healing Field — restore HP',
         'Decoy / Ice Bomb — crowd control',
-        'Bomb Launcher — long-range explosives',
         'Tomes (chicken/bat/wolf/spider/spirit) — summon allies',
       ] },
     ],
@@ -8286,7 +8324,7 @@ const TUTORIAL_PAGES = [
         'Dash is unlocked by default',
       ] },
       { heading: 'What They Do', lines: [
-        'Dash — quick teleport with i-frames',
+        'Dash — i-frame teleport in MOVEMENT direction',
         'Bullet Time — zombies slow to 30%',
         'Rage — your damage doubles',
         'Phase Walk — brief invulnerability',
@@ -8334,11 +8372,21 @@ const TUTORIAL_PAGES = [
         'Shielded (steel blue) — shield blocks front hits',
         'Spawner (brown) — births fast hatchlings',
       ] },
-      { heading: 'Mini-Bosses & Bosses', lines: [
-        'Mini-Boss every 5 waves — orange-eyed, armored',
-        'Nukes damage mini-bosses but cannot kill them',
-        'Boss every 20 waves — drops chest + ability book',
+      { heading: 'Mini-Bosses', lines: [
+        'Spawn every 5 waves — orange-eyed, armored',
+        'Nukes damage them but cannot finish them off',
+        'Always drop money + a chunky pickup haul',
+      ] },
+      { heading: 'Boss Archetypes (every 20 waves)', lines: [
+        'Warlord (red) — summons minions on a 4-6s cycle',
+        'Necromancer (purple) — bigger minion swarms',
+        'Charger (orange) — winds up, then lunges at you',
+        'Hex Mage (teal) — throws homing hex bolts from range',
+        'Berserker (black) — faster + angrier the more it bleeds',
+      ] },
+      { heading: 'Tips', lines: [
         'Flank Shielded zombies — dash behind for full damage',
+        'Bosses always drop an ability book + reward chest',
       ] },
     ],
   },
@@ -8409,6 +8457,29 @@ const TUTORIAL_PAGES = [
         'it moves into the storage box (corner of the shop)',
         'Open the Storage tab in the shop to retrieve any item',
         'Holds 12 items · oldest falls off when full',
+      ] },
+    ],
+  },
+  {
+    title: 'Co-op & Settings',
+    accent: '#9bf07a',
+    sections: [
+      { heading: 'Local Co-op (P2)', lines: [
+        'Settings → Co-op P2: ON to summon a sidekick',
+        'P2 moves with ARROW KEYS (P1 keeps WASD)',
+        'P2 auto-fires at nearest zombie within 380px',
+        'Shares your weapon / money / perks · own HP',
+        'P2 down = instant respawn next to P1',
+      ] },
+      { heading: 'Auto-Shoot', lines: [
+        'Settings → Auto-Shoot: ON for hands-free P1 fire',
+        'Manual mouse fire still works on top of it',
+        'Pairs well with melee-focused secondary play',
+      ] },
+      { heading: 'The Trader', lines: [
+        'Sometimes arrives in the shop for 3 waves',
+        'Sells 6 exclusive gag weapons not sold elsewhere',
+        'High prices · weapons vanish when swapped away',
       ] },
     ],
   },
@@ -8515,9 +8586,10 @@ function drawPauseMenu() {
 
   const bw = 240, bh = 56, gap = 12;
   const items = [
-    { id: 'resume',   label: 'Resume',    accent: '#8be08b' },
-    { id: 'settings', label: 'Settings',  accent: '#c47eff' },
-    { id: 'menu',     label: 'Main Menu', accent: '#7ec8ff' },
+    { id: 'resume',   label: 'Resume',     accent: '#8be08b' },
+    { id: 'tutorial', label: 'How to Play', accent: '#5cffec' },
+    { id: 'settings', label: 'Settings',   accent: '#c47eff' },
+    { id: 'menu',     label: 'Main Menu',  accent: '#7ec8ff' },
   ];
   let by = H / 2 - 30;
   menuButtons = [];
@@ -9130,7 +9202,9 @@ function handleMenuAction(id) {
       tutorialPage = Math.max(0, tutorialPage - 1);
       break;
     case 'tutorial-close':
-      gameState = 'menu';
+      // Return to wherever the tutorial was opened from — pause overlay if
+      // a game is in progress, otherwise the main menu.
+      gameState = hasGame ? 'paused' : 'menu';
       break;
     case 'menu':
       gameState = 'menu';
