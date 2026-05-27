@@ -795,6 +795,12 @@ let shopTab = 'upgrades'; // 'upgrades' | 'arsenal' | 'storage' — active tab i
 // Hit-test rects populated by drawShop each frame so mousedown can route clicks.
 let shopTabRects = null;
 let shopBuyRects = [];     // [{ rect, action: () => void }]
+// Per-tab scroll offset (pixels). Clamped each frame against the rendered
+// content height so switching tabs or buying items can't leave the view
+// stuck past the end of the list.
+const shopScroll = { upgrades: 0, arsenal: 0, storage: 0 };
+let shopBodyRect = null;   // body region currently being scrolled (for wheel hit-test)
+let shopMaxScroll = 0;     // max scroll value for the active tab this frame
 
 // ---------- Upgrade tree (bought with EXP from zombie kills, T to open) ----------
 // Three branches, four upgrades per branch, bought in order. Each upgrade
@@ -2070,12 +2076,29 @@ addEventListener('keydown', e => {
 });
 addEventListener('keyup', e => { keys[e.code] = false; });
 
-// Scroll wheel cycles through unlocked abilities — down = next, up = prev.
-// Listener attached to the canvas only so scrolling outside the game still
-// works on the page (there's nothing else here, but it's the polite default).
+// Scroll wheel routes by context:
+//   - tutorial overlay  → page next/prev (one step per notch)
+//   - in shop panel     → scroll the active tab's body
+//   - settings page     → scroll the settings body (if/when it grows)
+//   - otherwise playing → cycle the selected ability
+// preventDefault is called whenever we consume the event so the page itself
+// (the wrapping body) doesn't also scroll.
 c.addEventListener('wheel', e => {
-  if (gameState !== 'playing') return;
   if (e.deltaY === 0) return;
+  // Tutorial: a single wheel notch pages forward/back.
+  if (gameState === 'tutorial') {
+    if (e.deltaY > 0) tutorialPage = Math.min(TUTORIAL_PAGES.length - 1, tutorialPage + 1);
+    else              tutorialPage = Math.max(0, tutorialPage - 1);
+    e.preventDefault();
+    return;
+  }
+  if (gameState !== 'playing') return;
+  // Shop is open whenever the player stands inside the shop rect.
+  if (inShop()) {
+    shopScroll[shopTab] = Math.max(0, Math.min(shopMaxScroll, (shopScroll[shopTab] || 0) + e.deltaY));
+    e.preventDefault();
+    return;
+  }
   cycleAbility(e.deltaY > 0 ? 1 : -1);
   e.preventDefault();
 }, { passive: false });
@@ -2213,7 +2236,12 @@ c.addEventListener('mousedown', e => {
   if (inShop()) {
     if (shopTabRects) {
       for (const r of shopTabRects) {
-        if (pointInRect(mouse, r)) { shopTab = r.id; SFX.uiClick(); return; }
+        if (pointInRect(mouse, r)) {
+          if (shopTab !== r.id) shopScroll[r.id] = 0;
+          shopTab = r.id;
+          SFX.uiClick();
+          return;
+        }
       }
     }
     for (const b of shopBuyRects) {
@@ -7428,6 +7456,23 @@ function drawShop() {
   const bodyX = x + 14;
   const bodyY = tabY + tabH + 12;
   const bodyW = w - 28;
+  // Body clip region — used for both the scroll viewport and visibility checks.
+  const clipY = bodyY - 6;
+  const clipH = (y + h) - clipY - 10;
+  shopBodyRect = { x, y: clipY, w, h: clipH };
+
+  // Save the index at which this frame's body rects start so we can shift
+  // them into screen-space after the scroll translate is undone.
+  const buyStart = shopBuyRects.length;
+  const sy = shopScroll[shopTab] || 0;
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(x + 1, clipY, w - 2, clipH);
+  ctx.clip();
+  ctx.translate(0, -sy);
+
+  let contentBottom = bodyY; // tracked so we know the scroll range
 
   if (shopTab === 'upgrades') {
     ctx.fillStyle = '#888c95';
@@ -7439,7 +7484,10 @@ function drawShop() {
       const can = player.money >= u.cost;
       const rowH = 32;
       const rowRect = { x: bodyX, y: ly - 14, w: bodyW, h: rowH };
-      const hover = can && pointInRect(mouse, rowRect);
+      // hover-check against screen-space cursor — apply sy in reverse
+      const screenRect = { x: rowRect.x, y: rowRect.y - sy, w: rowRect.w, h: rowRect.h };
+      const hover = can && pointInRect(mouse, screenRect)
+        && screenRect.y + screenRect.h > clipY && screenRect.y < clipY + clipH;
       if (hover) {
         ctx.fillStyle = 'rgba(126, 200, 255, 0.10)';
         ctx.fillRect(rowRect.x, rowRect.y, rowRect.w, rowRect.h);
@@ -7458,6 +7506,7 @@ function drawShop() {
       shopBuyRects.push({ rect: rowRect, action: () => tryBuy(i) });
       ly += rowH;
     }
+    contentBottom = ly;
   } else if (shopTab === 'arsenal') {
     ctx.fillStyle = '#9aa0ab';
     ctx.font = '10px system-ui';
@@ -7467,13 +7516,14 @@ function drawShop() {
     ctx.font = 'bold 11px system-ui';
     ctx.fillText('PRIMARIES', bodyX, ly);
     ly += 12;
-    ly = drawArsenalList(bodyX, ly, bodyW, ARSENAL_PRIMARIES, 'weapon');
+    ly = drawArsenalList(bodyX, ly, bodyW, ARSENAL_PRIMARIES, 'weapon', sy, clipY, clipH);
     ly += 8;
     ctx.fillStyle = '#d63030';
     ctx.font = 'bold 11px system-ui';
     ctx.fillText('SECONDARIES', bodyX, ly);
     ly += 12;
-    drawArsenalList(bodyX, ly, bodyW, ARSENAL_SECONDARIES, 'secondary');
+    ly = drawArsenalList(bodyX, ly, bodyW, ARSENAL_SECONDARIES, 'secondary', sy, clipY, clipH);
+    contentBottom = ly;
   } else if (shopTab === 'storage') {
     ctx.fillStyle = '#9aa0ab';
     ctx.font = '10px system-ui';
@@ -7485,12 +7535,15 @@ function drawShop() {
     } else {
       const cellW = 64, cellH = 64, gap = 6;
       const cols = Math.floor((bodyW + gap) / (cellW + gap));
+      let lastBottom = bodyY + 18;
       for (let i = 0; i < storage.length; i++) {
         const item = storage[i];
         const cx = bodyX + (i % cols) * (cellW + gap);
         const cy = bodyY + 18 + Math.floor(i / cols) * (cellH + gap);
         const rect = { x: cx, y: cy, w: cellW, h: cellH };
-        const hover = pointInRect(mouse, rect);
+        const screenRect = { x: cx, y: cy - sy, w: cellW, h: cellH };
+        const hover = pointInRect(mouse, screenRect)
+          && screenRect.y + screenRect.h > clipY && screenRect.y < clipY + clipH;
         ctx.fillStyle = hover ? '#1f2230' : '#13151c';
         ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
         ctx.strokeStyle = item.color;
@@ -7511,12 +7564,44 @@ function drawShop() {
         // row keeps its own value rather than aliasing the loop variable.
         const idx = i;
         shopBuyRects.push({ rect, action: () => retrieveFromStorage(idx) });
+        lastBottom = cy + cellH;
       }
+      contentBottom = lastBottom;
     }
+  }
+
+  ctx.restore();
+
+  // Shift the rects we just pushed into screen space (clip translate is gone now)
+  // and drop any that fall entirely outside the visible viewport so clicks on
+  // off-screen rows don't register.
+  for (let i = shopBuyRects.length - 1; i >= buyStart; i--) {
+    const r = shopBuyRects[i].rect;
+    r.y -= sy;
+    if (r.y + r.h <= clipY || r.y >= clipY + clipH) {
+      shopBuyRects.splice(i, 1);
+    }
+  }
+
+  // Compute max scroll and clamp. Stored on a module-level for the wheel.
+  const contentH = contentBottom - bodyY;
+  shopMaxScroll = Math.max(0, contentH - clipH + 14);
+  if (shopScroll[shopTab] > shopMaxScroll) shopScroll[shopTab] = shopMaxScroll;
+  if (shopScroll[shopTab] < 0) shopScroll[shopTab] = 0;
+
+  // Scrollbar — only when there's something to scroll
+  if (shopMaxScroll > 0) {
+    const trackX = x + w - 6, trackY = clipY + 2, trackH = clipH - 4;
+    ctx.fillStyle = 'rgba(80, 90, 110, 0.18)';
+    ctx.fillRect(trackX, trackY, 3, trackH);
+    const thumbH = Math.max(30, trackH * (clipH / contentH));
+    const thumbY = trackY + (trackH - thumbH) * (shopScroll[shopTab] / shopMaxScroll);
+    ctx.fillStyle = accent;
+    ctx.fillRect(trackX, thumbY, 3, thumbH);
   }
 }
 
-function drawArsenalList(x, y, w, entries, kind) {
+function drawArsenalList(x, y, w, entries, kind, sy, clipY, clipH) {
   const rowH = 30;
   let ly = y;
   for (const entry of entries) {
@@ -7525,7 +7610,11 @@ function drawArsenalList(x, y, w, entries, kind) {
     const equipped = kind === 'weapon' ? player.weapon === entry.id : player.secondary === entry.id;
     const can = player.money >= entry.cost && !equipped;
     const rowRect = { x, y: ly, w, h: rowH };
-    const hover = can && pointInRect(mouse, rowRect);
+    // Hover-test against screen-space cursor (translate is in effect, so we
+    // subtract sy manually) and require the row to be inside the clip region.
+    const screenY = ly - sy;
+    const visible = screenY + rowH > clipY && screenY < clipY + clipH;
+    const hover = can && visible && pointInRect(mouse, { x, y: screenY, w, h: rowH });
     if (hover) {
       ctx.fillStyle = 'rgba(214, 48, 48, 0.14)';
       ctx.fillRect(rowRect.x, rowRect.y, rowRect.w, rowRect.h);
