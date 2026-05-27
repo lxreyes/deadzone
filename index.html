@@ -44,10 +44,117 @@ function ensureAudio() {
     masterGain = audioCtx.createGain();
     masterGain.gain.value = 0.32;
     masterGain.connect(audioCtx.destination);
+    ensureMusic();
   } catch (e) { /* environment lacks Web Audio; sfx becomes a no-op */ }
+}
+
+// ----- Background music (procedural ambient drones, two layers crossfaded) -----
+let musicMaster = null;
+let musicMenuGain = null;   // calm pads layer
+let musicCombatGain = null; // tense pulsing layer
+let musicTargetState = null;
+
+function ensureMusic() {
+  if (musicMaster || !audioCtx) return;
+  // Master is kept quiet so the SFX cut through cleanly
+  musicMaster = audioCtx.createGain();
+  musicMaster.gain.value = 0.18;
+  musicMaster.connect(audioCtx.destination);
+
+  // CALM PADS — a soft minor chord with slow LFO detune. Used outside gameplay.
+  musicMenuGain = audioCtx.createGain();
+  musicMenuGain.gain.value = 0;
+  const menuLP = audioCtx.createBiquadFilter();
+  menuLP.type = 'lowpass';
+  menuLP.frequency.value = 1400;
+  menuLP.connect(musicMenuGain);
+  musicMenuGain.connect(musicMaster);
+  for (const freq of [110, 164.81, 220, 329.63]) { // A2, E3, A3, E4 — open + airy
+    const osc = audioCtx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.value = freq;
+    const lfo = audioCtx.createOscillator();
+    lfo.type = 'sine';
+    lfo.frequency.value = 0.08 + Math.random() * 0.14;
+    const lfoAmt = audioCtx.createGain();
+    lfoAmt.gain.value = 2.5;
+    lfo.connect(lfoAmt);
+    lfoAmt.connect(osc.frequency);
+    const oscGain = audioCtx.createGain();
+    oscGain.gain.value = 0.22;
+    osc.connect(oscGain);
+    oscGain.connect(menuLP);
+    osc.start();
+    lfo.start();
+  }
+
+  // COMBAT — low sawtooth drone + a heartbeat-pulse sub bass. Used while playing.
+  musicCombatGain = audioCtx.createGain();
+  musicCombatGain.gain.value = 0;
+  const combatLP = audioCtx.createBiquadFilter();
+  combatLP.type = 'lowpass';
+  combatLP.frequency.value = 520;
+  combatLP.connect(musicCombatGain);
+  musicCombatGain.connect(musicMaster);
+  for (const freq of [55, 82.5, 110, 138.59]) { // A1, E2, A2, C#3
+    const osc = audioCtx.createOscillator();
+    osc.type = 'sawtooth';
+    osc.frequency.value = freq;
+    const oscGain = audioCtx.createGain();
+    oscGain.gain.value = 0.18;
+    osc.connect(oscGain);
+    oscGain.connect(combatLP);
+    osc.start();
+  }
+  // pulsing heartbeat — square wave LFO on a sub-bass gain
+  const heart = audioCtx.createOscillator();
+  heart.type = 'sine';
+  heart.frequency.value = 41.2; // E1
+  const heartGain = audioCtx.createGain();
+  heartGain.gain.value = 0;
+  const pulse = audioCtx.createOscillator();
+  pulse.type = 'square';
+  pulse.frequency.value = 1.2; // ~72 BPM
+  const pulseAmt = audioCtx.createGain();
+  pulseAmt.gain.value = 0.18;
+  pulse.connect(pulseAmt);
+  pulseAmt.connect(heartGain.gain);
+  heart.connect(heartGain);
+  heartGain.connect(combatLP);
+  heart.start();
+  pulse.start();
+}
+
+// Crossfade between calm/combat layers based on the active game state.
+function updateMusicForState() {
+  if (!musicMaster) return;
+  const inCombat = (gameState === 'playing');
+  if (musicTargetState === inCombat) return;
+  musicTargetState = inCombat;
+  const t = audioCtx.currentTime;
+  const fade = 2.2;
+  // Defensive: cancel any in-flight ramps and pin current values
+  for (const g of [musicMenuGain, musicCombatGain]) {
+    g.gain.cancelScheduledValues(t);
+    g.gain.setValueAtTime(g.gain.value, t);
+  }
+  musicMenuGain.gain.linearRampToValueAtTime(inCombat ? 0 : 1, t + fade);
+  musicCombatGain.gain.linearRampToValueAtTime(inCombat ? 1 : 0, t + fade);
 }
 function resumeAudio() {
   if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+  // The first user gesture should also wake the music layers.
+  if (musicMaster && musicTargetState === null) updateMusicForState();
+}
+
+// Keep the music master in sync with the mute toggle. Called whenever the
+// mute state changes (M key, settings, cheats).
+function applyMusicMute() {
+  if (!musicMaster) return;
+  const t = audioCtx.currentTime;
+  musicMaster.gain.cancelScheduledValues(t);
+  musicMaster.gain.setValueAtTime(musicMaster.gain.value, t);
+  musicMaster.gain.linearRampToValueAtTime(soundMuted ? 0 : 0.18, t + 0.4);
 }
 // Quick tone with linear attack + exponential decay; optional pitch sweep.
 function tone({ freq = 440, type = 'square', dur = 0.1, vol = 0.3, sweep = 0, delay = 0, attack = 0.005 } = {}) {
@@ -404,47 +511,63 @@ let buildToolbarRects = null; // populated each frame by drawBuildToolbar
 
 // Each cheat: label (string or () => string) + run() to execute.
 // Optional toggle() returns on/off state for boolean cheats.
-const cheats = [
-  { label: 'Full Heal', run() { player.hp = player.maxHp; } },
-  { label: 'Kill All', run() {
-      for (const z of zombies) {
-        kills++;
-        spawnDeathParticles(z.x, z.y, z.color);
-        addBlood(z.x, z.y, z.isBoss ? 2 : 1);
-        dropCoinsFor(z);
-      }
-      zombies.length = 0;
-    } },
-  { label: '+5 Waves', run() {
-      zombies.length = 0; bullets.length = 0;
-      wave = wave + 4;
-      intermission = 0;
-      beginNextWave();
-    } },
-  { label: 'Spawn Boss', run() { spawnBoss(); } },
-  { label: '+Pickup', run() {
-      const type = PICKUP_KEYS[Math.floor(Math.random() * PICKUP_KEYS.length)];
-      const a = Math.random() * Math.PI * 2;
-      spawnPickupAt(player.x + Math.cos(a) * 50, player.y + Math.sin(a) * 50, type);
-    } },
-  { label: () => `Gun: ${WEAPONS[player.weapon].name}`,
-    run() {
-      const ks = Object.keys(WEAPONS);
-      const i = ks.indexOf(player.weapon);
-      player.weapon = ks[(i + 1) % ks.length];
-    } },
-  { label: () => `Blade: ${player.secondary ? SECONDARIES[player.secondary].name : 'None'}`,
-    run() {
-      const ks = [null, ...SECONDARY_KEYS];
-      const i = ks.indexOf(player.secondary);
-      player.secondary = ks[(i + 1) % ks.length];
-    } },
-  { label: 'Max Upgrades', run() {
-      for (const u of upgrades) if (u.type === 'perm') u.buy();
-      player.hp = player.maxHp;
-    } },
-  { label: 'God Mode', toggle: () => godMode, run() { godMode = !godMode; } },
-  { label: 'Mute', toggle: () => soundMuted, run() { soundMuted = !soundMuted; } },
+// Cheats organized into collapsible subsections. Each section has its own
+// open/closed flag so the player can hide groups they're not using.
+const cheatSections = [
+  { id: 'player', name: 'Player', open: true, items: [
+    { label: 'Full Heal', run() { player.hp = player.maxHp; } },
+    { label: 'Max Upgrades', run() {
+        for (const u of upgrades) if (u.type === 'perm') u.buy();
+        player.hp = player.maxHp;
+      } },
+    { label: 'God Mode', toggle: () => godMode, run() { godMode = !godMode; } },
+  ]},
+  { id: 'waves', name: 'Waves & Bosses', open: true, items: [
+    { label: '+5 Waves', run() {
+        zombies.length = 0; bullets.length = 0;
+        wave = wave + 4;
+        intermission = 0;
+        beginNextWave();
+      } },
+    { label: 'Spawn Boss', run() { spawnBoss(); } },
+    { label: 'Kill All', run() {
+        for (const z of zombies) {
+          if (!z.isDummy) kills++;
+          spawnDeathParticles(z.x, z.y, z.color);
+          addBlood(z.x, z.y, z.isBoss ? 2 : 1);
+          if (!z.isDummy) dropCoinsFor(z);
+        }
+        zombies.length = 0;
+      } },
+  ]},
+  { id: 'spawn', name: 'Spawn Enemies', open: false, items: [
+    { label: '+Normal', run() { spawnSpecific('normal'); } },
+    { label: '+Fast',   run() { spawnSpecific('fast'); } },
+    { label: '+Tank',   run() { spawnSpecific('tank'); } },
+    { label: '+Dummy',  run() { spawnTrainerDummy(); } },
+  ]},
+  { id: 'loadout', name: 'Loadout', open: false, items: [
+    { label: '+Pickup', run() {
+        const type = PICKUP_KEYS[Math.floor(Math.random() * PICKUP_KEYS.length)];
+        const a = Math.random() * Math.PI * 2;
+        spawnPickupAt(player.x + Math.cos(a) * 50, player.y + Math.sin(a) * 50, type);
+      } },
+    { label: () => `Gun: ${WEAPONS[player.weapon].name}`,
+      run() {
+        const ks = Object.keys(WEAPONS);
+        const i = ks.indexOf(player.weapon);
+        player.weapon = ks[(i + 1) % ks.length];
+      } },
+    { label: () => `Blade: ${player.secondary ? SECONDARIES[player.secondary].name : 'None'}`,
+      run() {
+        const ks = [null, ...SECONDARY_KEYS];
+        const i = ks.indexOf(player.secondary);
+        player.secondary = ks[(i + 1) % ks.length];
+      } },
+  ]},
+  { id: 'audio', name: 'Audio', open: false, items: [
+    { label: 'Mute', toggle: () => soundMuted, run() { soundMuted = !soundMuted; } },
+  ]},
 ];
 
 // Cheats panel stat sliders — read/write player fields directly.
@@ -1045,13 +1168,18 @@ function darken(hex, amount = 0.4) {
 addEventListener('keydown', e => {
   ensureAudio(); resumeAudio();
   // Global keys that work in every state
-  if (e.code === 'KeyM') { soundMuted = !soundMuted; if (!soundMuted) SFX.uiClick(); return; }
+  if (e.code === 'KeyM') {
+    soundMuted = !soundMuted;
+    applyMusicMute();
+    if (!soundMuted) SFX.uiClick();
+    return;
+  }
   // Escape switches game-state — checked before recording the key
   if (e.code === 'Escape') {
     if (buildMode)                     { buildMode = false; SFX.uiClick(); return; }
-    if (gameState === 'playing')       { gameState = 'paused'; clearKeys(); SFX.uiClick(); return; }
-    if (gameState === 'paused')        { gameState = 'playing'; SFX.uiClick(); return; }
-    if (gameState === 'settings')      { gameState = hasGame ? 'paused' : 'menu'; SFX.uiClick(); return; }
+    if (gameState === 'playing')       { gameState = 'paused'; clearKeys(); SFX.uiClick(); updateMusicForState(); return; }
+    if (gameState === 'paused')        { gameState = 'playing'; SFX.uiClick(); updateMusicForState(); return; }
+    if (gameState === 'settings')      { gameState = hasGame ? 'paused' : 'menu'; SFX.uiClick(); updateMusicForState(); return; }
     if (gameState === 'menu')          return;
   }
   // While a menu overlay is up, swallow other keys so movement/shoot stay frozen.
@@ -1161,8 +1289,20 @@ c.addEventListener('mousedown', e => {
     return;
   }
   if (cheatsOpen) {
-    for (const c of cheats) {
-      if (c.rect && pointInRect(mouse, c.rect)) { SFX.uiClick(); c.run(); return; }
+    // section headers toggle their group open/closed
+    for (const sec of cheatSections) {
+      if (sec.headerRect && pointInRect(mouse, sec.headerRect)) {
+        sec.open = !sec.open;
+        SFX.uiClick();
+        return;
+      }
+    }
+    // individual cheat buttons
+    for (const sec of cheatSections) {
+      if (!sec.open) continue;
+      for (const c of sec.items) {
+        if (c.rect && pointInRect(mouse, c.rect)) { SFX.uiClick(); c.run(); return; }
+      }
     }
     // sliders — start a drag and seek the clicked position immediately
     for (const s of cheatSliders) {
@@ -1287,6 +1427,15 @@ function dropBurst(x, y, color, n = 14) {
 // responsible for splicing the zombie out of the zombies array — we do not
 // touch the array here so this is safe to call from any iteration order.
 function killZombie(z) {
+  // Dummies don't count toward kills, don't drop loot, just poof.
+  if (z.isDummy) {
+    for (let k = 0; k < 18; k++) {
+      const a = Math.random() * Math.PI * 2;
+      const s = 100 + Math.random() * 180;
+      particles.push({ x: z.x, y: z.y, vx: Math.cos(a)*s, vy: Math.sin(a)*s, life: 0.55, color: '#cdd1da' });
+    }
+    return;
+  }
   kills++;
   spawnDeathParticles(z.x, z.y, z.color);
   addBlood(z.x, z.y, z.isBoss ? 2 : 1);
@@ -1406,6 +1555,48 @@ function spawnZombie() {
   });
 }
 
+// Cheat helper: spawn a specific zombie type at an arena edge.
+function spawnSpecific(type) {
+  if (zombies.length >= 100) return;
+  const { x, y } = edgeSpawnPoint();
+  const base = {
+    normal: { hp: 22, speed: 62,  damage: 14, r: 12, color: '#5e8c4a', money: 3 },
+    fast:   { hp: 14, speed: 120, damage: 10, r: 9,  color: '#a85040', money: 5 },
+    tank:   { hp: 75, speed: 38,  damage: 26, r: 19, color: '#374827', money: 14 },
+  }[type];
+  if (!base) return;
+  const hpMul   = 1 + wave * 0.09;
+  const dmgMul  = 1 + wave * 0.025;
+  const moneyMul = 1 + wave * 0.04;
+  const hp = Math.ceil(base.hp * hpMul);
+  zombies.push({
+    x, y, type,
+    r: base.r, color: base.color, speed: base.speed,
+    hp, hpMax: hp,
+    damage: base.damage * dmgMul,
+    money: Math.ceil(base.money * moneyMul),
+    phase: Math.random() * Math.PI * 2,
+  });
+}
+
+// Trainer dummy — stationary punching bag at the center of the arena. Massive
+// HP, no movement, no contact damage. Shows damage floaters when hit so the
+// player can see exactly how much each weapon dishes out.
+function spawnTrainerDummy() {
+  zombies.push({
+    x: W / 2, y: H / 2,
+    type: 'dummy',
+    isDummy: true,
+    r: 18,
+    color: '#cdd1da',
+    speed: 0,
+    hp: 99999, hpMax: 99999,
+    damage: 0,
+    money: 0,
+    phase: 0,
+  });
+}
+
 function spawnBoss() {
   const bossNum = Math.max(1, Math.floor(wave / 20));
   const { x, y } = edgeSpawnPoint();
@@ -1518,7 +1709,8 @@ function updateWave(dt) {
       waveZombiesToSpawn--;
       waveSpawnTimer += Math.max(0.16, 0.85 - wave * 0.013);
     }
-  } else if (zombies.length === 0 && wave > 0) {
+  } else if (zombies.every(z => z.isDummy) && wave > 0) {
+    // Dummies (training props) don't count toward wave completion
     endCurrentWave();
   }
 }
@@ -2290,6 +2482,8 @@ function zombieCanEnter(x, y, r) {
 function updateZombies(dt) {
   for (let i = zombies.length - 1; i >= 0; i--) {
     const z = zombies[i];
+    // Dummies don't move, don't attack, don't aggro on anything.
+    if (z.isDummy) continue;
     // Aggro toward the nearest decoy if there is one, else the player.
     const lure = nearestDecoy(z);
     const tx = lure ? lure.x : player.x;
@@ -2458,6 +2652,16 @@ function updateBullets(dt) {
         z.hp -= b.damage;
         b.hits.add(z);
         SFX.zombieHit();
+        // Trainer dummy shows a damage floater so you can read the numbers
+        if (z.isDummy) {
+          floaters.push({
+            x: z.x + (Math.random() - 0.5) * 16,
+            y: z.y - 14,
+            text: (b.isCrit ? 'CRIT ' : '') + Math.round(b.damage).toString(),
+            life: 0.8,
+            color: b.isCrit ? '#fff5a8' : '#dfe2e8',
+          });
+        }
         // Tesla: chain to nearby zombies after the direct hit.
         if (b.bulletKind === 'lightning' && b.chains > 0) {
           chainLightning(z, b.damage, b.chains, b.chainRange);
@@ -2929,6 +3133,24 @@ function render() {
 
   // zombies
   for (const z of zombies) {
+    if (z.isDummy) {
+      // wooden bullseye target on a stand — friendlier than a zombie
+      ctx.fillStyle = '#f4e4b5';
+      ctx.beginPath(); ctx.arc(z.x, z.y, z.r, 0, Math.PI*2); ctx.fill();
+      ctx.strokeStyle = '#3a2810';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.strokeStyle = '#d63030';
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(z.x, z.y, z.r * 0.65, 0, Math.PI*2); ctx.stroke();
+      ctx.fillStyle = '#d63030';
+      ctx.beginPath(); ctx.arc(z.x, z.y, z.r * 0.28, 0, Math.PI*2); ctx.fill();
+      // little stand below
+      ctx.fillStyle = '#3a2810';
+      ctx.fillRect(z.x - 2, z.y + z.r, 4, 10);
+      ctx.fillRect(z.x - 8, z.y + z.r + 10, 16, 3);
+      continue;
+    }
     if (z.isBoss) {
       // pulsing aura
       const pulse = 1 + Math.sin(gameTime * 4) * 0.08;
@@ -3617,11 +3839,7 @@ function drawSettingsMenu() {
   menuButtons.push(muteRect);
   by += bh + gap;
 
-  // Cheats unlock shortcut
-  const cheatRect = { x: (W - bw) / 2, y: by, w: bw, h: bh, id: 'cheatsToggle' };
-  drawMenuButton(cheatRect, `Cheats: ${cheatsUnlocked ? 'UNLOCKED' : 'LOCKED'}`, 'click to unlock without the 1234 code', '#ffd166');
-  menuButtons.push(cheatRect);
-  by += bh + gap;
+  // (cheats can only be unlocked via the 1234 code in gameplay)
 
   // Back
   const backRect = { x: (W - bw) / 2, y: H - 90, w: bw, h: bh, id: 'back' };
@@ -3672,6 +3890,7 @@ function handleMenuAction(id) {
       cheatsOpen = true;
       hasGame = true;
       gameState = 'playing';
+      spawnTrainerDummy();
       break;
     case 'settings':
       gameState = 'settings';
@@ -3680,33 +3899,39 @@ function handleMenuAction(id) {
       gameState = 'menu';
       break;
     case 'back':
-      // settings → wherever we came from. Default to menu if no game yet.
       gameState = hasGame ? 'paused' : 'menu';
       break;
     case 'mute':
       soundMuted = !soundMuted;
-      break;
-    case 'cheatsToggle':
-      cheatsUnlocked = !cheatsUnlocked;
-      if (cheatsUnlocked) cheatsOpen = true;
+      applyMusicMute();
       break;
   }
+  updateMusicForState();
 }
 
 function drawCheats() {
   // hidden until the player enters the unlock code
   if (!cheatsUnlocked) {
     cheatsHeaderRect = null;
-    for (const c of cheats) c.rect = null;
+    for (const sec of cheatSections) {
+      sec.headerRect = null;
+      for (const c of sec.items) c.rect = null;
+    }
     for (const s of cheatSliders) s.rect = null;
     return;
   }
   const x = cheatsPanel.x, y = cheatsPanel.y;
-  const w = cheatsPanel.w, btnH = 24, header = 24, sliderH = 22;
-  const sliderSection = cheatSliders.length * (sliderH + 2) + 18;
-  const h = cheatsOpen
-    ? header + cheats.length * (btnH + 3) + 6 + sliderSection
-    : header;
+  const w = cheatsPanel.w, btnH = 22, header = 24, secH = 18, sliderH = 22;
+  // Compute height by walking the same layout we'll use below
+  let bodyH = 0;
+  if (cheatsOpen) {
+    for (const sec of cheatSections) {
+      bodyH += secH + 2;
+      if (sec.open) bodyH += sec.items.length * (btnH + 3) + 4;
+    }
+    bodyH += cheatSliders.length * (sliderH + 2) + 18;
+  }
+  const h = cheatsOpen ? header + bodyH + 6 : header;
   ctx.fillStyle = 'rgba(8, 10, 16, 0.92)';
   ctx.fillRect(x, y, w, h);
   ctx.strokeStyle = godMode ? '#8be08b' : '#5a87c4';
@@ -3716,7 +3941,6 @@ function drawCheats() {
   // header — also a drag handle
   ctx.fillStyle = cheatsDrag ? '#1c2030' : '#0e1018';
   ctx.fillRect(x, y, w, header);
-  // small grip dots on the left of the header to hint draggability
   ctx.fillStyle = '#5a87c4';
   for (let k = 0; k < 3; k++) {
     ctx.fillRect(x + 5, y + 8 + k * 4, 3, 2);
@@ -3734,30 +3958,58 @@ function drawCheats() {
   cheatsHeaderRect = { x, y, w, h: header };
 
   if (!cheatsOpen) {
-    for (const c of cheats) c.rect = null;
+    for (const sec of cheatSections) {
+      sec.headerRect = null;
+      for (const c of sec.items) c.rect = null;
+    }
     for (const s of cheatSliders) s.rect = null;
     return;
   }
 
-  let by = y + header + 3;
-  for (const c of cheats) {
-    const isOn = c.toggle ? c.toggle() : false;
-    const rect = { x: x + 8, y: by, w: w - 16, h: btnH };
-    c.rect = rect;
-    const hover = pointInRect(mouse, rect);
-    ctx.fillStyle = isOn ? '#2e5a2e' : (hover ? '#262b36' : '#1c1f28');
-    ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
-    ctx.strokeStyle = isOn ? '#8be08b' : (hover ? '#7ec8ff' : '#33363f');
+  let by = y + header + 4;
+  // Render each section: collapsible header + (when open) buttons
+  for (const sec of cheatSections) {
+    const secRect = { x: x + 8, y: by, w: w - 16, h: secH, sec };
+    sec.headerRect = secRect;
+    const hover = pointInRect(mouse, secRect);
+    ctx.fillStyle = hover ? '#1c2030' : '#11141c';
+    ctx.fillRect(secRect.x, secRect.y, secRect.w, secRect.h);
+    ctx.strokeStyle = '#33363f';
     ctx.lineWidth = 1;
-    ctx.strokeRect(rect.x, rect.y, rect.w, rect.h);
-    ctx.fillStyle = '#fff';
-    ctx.font = 'bold 11px system-ui';
-    ctx.textAlign = 'center';
-    const labelStr = typeof c.label === 'function' ? c.label() : c.label;
-    ctx.fillText(
-      c.toggle ? `${labelStr}: ${isOn ? 'ON' : 'OFF'}` : labelStr,
-      rect.x + rect.w / 2, rect.y + 16);
-    by += btnH + 3;
+    ctx.strokeRect(secRect.x, secRect.y, secRect.w, secRect.h);
+    ctx.fillStyle = '#88aadd';
+    ctx.font = 'bold 10px system-ui';
+    ctx.textAlign = 'left';
+    ctx.fillText(sec.name.toUpperCase(), secRect.x + 8, secRect.y + 12);
+    ctx.fillStyle = '#9aa0ab';
+    ctx.textAlign = 'right';
+    ctx.fillText(sec.open ? '▾' : '▸', secRect.x + secRect.w - 8, secRect.y + 12);
+    ctx.textAlign = 'left';
+    by += secH + 2;
+    if (!sec.open) {
+      for (const c of sec.items) c.rect = null;
+      continue;
+    }
+    for (const c of sec.items) {
+      const isOn = c.toggle ? c.toggle() : false;
+      const rect = { x: x + 14, y: by, w: w - 28, h: btnH };
+      c.rect = rect;
+      const bhov = pointInRect(mouse, rect);
+      ctx.fillStyle = isOn ? '#2e5a2e' : (bhov ? '#262b36' : '#1c1f28');
+      ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+      ctx.strokeStyle = isOn ? '#8be08b' : (bhov ? '#7ec8ff' : '#33363f');
+      ctx.lineWidth = 1;
+      ctx.strokeRect(rect.x, rect.y, rect.w, rect.h);
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 11px system-ui';
+      ctx.textAlign = 'center';
+      const labelStr = typeof c.label === 'function' ? c.label() : c.label;
+      ctx.fillText(
+        c.toggle ? `${labelStr}: ${isOn ? 'ON' : 'OFF'}` : labelStr,
+        rect.x + rect.w / 2, rect.y + 15);
+      by += btnH + 3;
+    }
+    by += 2;
   }
 
   // Stats section header
