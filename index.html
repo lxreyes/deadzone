@@ -1103,21 +1103,23 @@ const PETS = {
     orbitRadius: 60, orbitSpeed: 2.4,
     desc: 'Orbits you · auto-shoots the nearest threat',
   },
-  // Apex pet — the dragon. Kites at long range and snipes with a single
-  // bright laser shot every few seconds. Uses bulletKind 'rail' (tapered
-  // streak + white core + glow) so the shot reads as one continuous
-  // energy beam crossing the screen instantly, not a spray of projectiles.
-  // Extremely expensive — capstone "save up your whole run" purchase.
+  // Apex pet — the dragon. Kites at long range and channels a short
+  // sustained laser stream every few seconds: rapid rail-pulses fired
+  // toward whatever's nearest, tracking it as the beam holds. Reads as
+  // a constant energy beam crossing the screen for ~0.6s, then a long
+  // recovery before it can fire again. Capstone "save your run" buy.
   dragon: {
     name: 'Dragon',      color: '#c83020', cost: 9000,
-    kind: 'beam', speed: 140, dmg: 200, attackCd: 3.5, range: 520,
+    kind: 'beam', speed: 140, dmg: 18, attackCd: 3.5, range: 520,
     keepDistance: 320,                    // stay at standoff range, don't charge
     drawSize: 44,                         // bigger than other pets in-world
     bulletSpeed: 1400, bulletLife: 0.5,   // very fast — near-instant cross-screen
     bulletColor: '#ff5050',
-    beamShots: 1, spread: 0,              // single straight shot — pure laser
+    beamDuration: 0.6,                    // length of the laser stream in seconds
+    beamFireInterval: 0.04,               // ~25 pulses/sec while streaming
+    spread: 0.02,                         // tiny jitter so the beam feels alive
     bulletKindOverride: 'rail',           // railgun streak render = "laser"
-    desc: 'Apex companion · keeps distance · fires a single huge laser blast',
+    desc: 'Apex companion · keeps distance · channels a short laser stream',
   },
 };
 const PET_KEYS = Object.keys(PETS);
@@ -5605,9 +5607,53 @@ function updatePets(dt) {
       // Save aim heading for the sprite
       p.heading = Math.atan2(dy, dx);
     }
-    // Attack
-    p.lastAttack = (p.lastAttack || 0) + dt;
-    if (near && p.lastAttack >= def.attackCd) {
+    // Attack — beam-kind pets handle channeling separately so the cooldown
+    // only starts AFTER the stream ends, not at the moment of the first
+    // pulse. Other kinds just check lastAttack against attackCd as before.
+    const isBeaming = def.kind === 'beam' && (p.beamUntil || 0) > gameTime;
+    const wasBeaming = !!p.beamWas;
+    if (wasBeaming && !isBeaming) {
+      // Beam just ended — kick off the recovery cooldown from this moment.
+      p.lastAttack = 0;
+    }
+    p.beamWas = isBeaming;
+    if (isBeaming) {
+      // Channel: fire one rail pulse per beamFireInterval, re-aiming each
+      // pulse so the beam tracks moving targets.
+      if (near) {
+        const dx = near.x - p.x, dy = near.y - p.y;
+        const d = Math.hypot(dx, dy) || 1;
+        p.heading = Math.atan2(dy, dx);
+        const interval = def.beamFireInterval || 0.05;
+        if (gameTime - (p.lastPulse || 0) >= interval) {
+          p.lastPulse = gameTime;
+          const ux = dx / d, uy = dy / d;
+          const muzzleR = (def.hitR || 14) + 8;
+          const spread = def.spread || 0.02;
+          const a = (Math.random() - 0.5) * spread;
+          const cs = Math.cos(a), sn = Math.sin(a);
+          const vx = (ux * cs - uy * sn) * def.bulletSpeed;
+          const vy = (ux * sn + uy * cs) * def.bulletSpeed;
+          bullets.push({
+            x: p.x + ux * muzzleR, y: p.y + uy * muzzleR,
+            vx, vy,
+            damage: def.dmg, pierce: 99,
+            hits: new Set(),
+            life: def.bulletLife,
+            color: def.bulletColor || def.color,
+            explosive: false, blastR: 0, blastDmg: 0,
+            bulletKind: def.bulletKindOverride || 'rail',
+            bounces: 0, leavesSlick: false, spawnChicks: 0,
+            chains: 0, chainRange: 0,
+            orbitAngle: 0, orbitRadius: 0, orbitSpeed: 0,
+            homing: false, isCrit: false, petBullet: true,
+          });
+        }
+      }
+    } else {
+      p.lastAttack = (p.lastAttack || 0) + dt;
+    }
+    if (!isBeaming && near && p.lastAttack >= def.attackCd) {
       if (def.kind === 'melee') {
         const dx = near.x - p.x, dy = near.y - p.y;
         const d = Math.hypot(dx, dy);
@@ -5627,42 +5673,12 @@ function updatePets(dt) {
           }
         }
       } else if (def.kind === 'beam') {
-        // Sustained ray — fires a tight salvo of high-pierce laser streaks
-        // along the line to the target. With tiny spread + the 'laser'
-        // bulletKind (long red streak + halo), the volley reads as a single
-        // continuous beam rather than discrete shots. Spawned from the
-        // dragon's muzzle (offset along the aim vector).
-        const dx = near.x - p.x, dy = near.y - p.y;
-        const d = Math.hypot(dx, dy) || 1;
-        const ux = dx / d, uy = dy / d;
-        const N = def.beamShots || 5;
-        const spread = def.spread || 0.03;
-        const muzzleR = (def.hitR || 14) + 8;
-        const kind = def.bulletKindOverride || 'flame';
-        for (let k = 0; k < N; k++) {
-          const a = (Math.random() - 0.5) * spread;
-          const cs = Math.cos(a), sn = Math.sin(a);
-          const vx = (ux * cs - uy * sn) * def.bulletSpeed;
-          const vy = (ux * sn + uy * cs) * def.bulletSpeed;
-          // Slight life jitter so the streaks read as a sustained beam,
-          // not a single instant flash.
-          bullets.push({
-            x: p.x + ux * muzzleR, y: p.y + uy * muzzleR,
-            vx, vy,
-            damage: def.dmg, pierce: 99,
-            hits: new Set(),
-            life: def.bulletLife * (0.85 + Math.random() * 0.3),
-            color: def.bulletColor || def.color,
-            explosive: false, blastR: 0, blastDmg: 0,
-            bulletKind: kind, bounces: 0, leavesSlick: false, spawnChicks: 0,
-            chains: 0, chainRange: 0,
-            orbitAngle: 0, orbitRadius: 0, orbitSpeed: 0,
-            homing: false, isCrit: false, petBullet: true,
-          });
-        }
-        // Roar / breath cue
-        p.lastAttack = 0;
-        p.beamFlashUntil = gameTime + 0.35;
+        // Open a fresh beam window. The streaming pulses themselves fire
+        // each frame above (via the isBeaming branch). lastAttack stays
+        // unchanged here so it can be reset to 0 when the beam ends.
+        p.beamUntil = gameTime + (def.beamDuration || 0.6);
+        p.lastPulse = 0;        // ensures the first pulse fires immediately
+        p.beamFlashUntil = gameTime + (def.beamDuration || 0.6);
         shake(3);
       } else {
         // Fire a pet bullet at the target — uses the regular bullets pipeline
