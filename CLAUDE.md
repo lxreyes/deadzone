@@ -263,7 +263,8 @@ Do this **on every game commit**, not in batches — a one-commit lag between de
 
 Rebuild as needed from `git log --oneline`. Most recent:
 
-1. **Food Trader** — new pink chef NPC, food-themed weapons + 5 cheaper food gag guns; older trader pivoted to non-food gags (bubble / harpoon / discoball / boomerang / vacuum) and dropped fish/pizza/toaster/noodle.
+1. **Swapped weapons go to Storage** — picking up a pickup, buying from Arsenal, or buying from a trader sends the OLD weapon straight to the shop's Storage tab instead of dropping a ground crate. Death drops still drop normally.
+2. **Food Trader** — new pink chef NPC, food-themed weapons + 5 cheaper food gag guns; older trader pivoted to non-food gags (bubble / harpoon / discoball / boomerang / vacuum) and dropped fish/pizza/toaster/noodle.
 2. **Boss Rush** — 5% chance from wave 60+ spawns 5 bosses at once; combined HP bar + big red banner.
 3. **Coins bank into storage** + chakram tracks cursor reliably.
 4. **Reset confirm modal** + desktop pause button.
