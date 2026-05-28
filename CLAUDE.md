@@ -242,6 +242,23 @@ Desktop only (`!isTouch`). `drawPauseButton()` puts a 36×30 `⏸` button top-ri
 2. Edit the relevant section. Incremental edits are fine — don't rewrite the whole file every commit.
 3. Every ~5 commits or when a system is renamed / restructured, do a full skim.
 
+## Mirroring releases to the Portfolio site
+
+The user features DEADZONE on their GitHub Pages portfolio at `https://lxreyes.github.io/deadzone/`. The portfolio repo lives at `/Users/lachlanreyes/Documents/projects/Githubpage/` (origin: `lxreyes/lxreyes.github.io`) and the game lives at `Githubpage/deadzone/index.html` — a copy of this repo's `index.html`. **After every push that updates the game**, mirror the change and push the portfolio too:
+
+```sh
+cp /Users/lachlanreyes/Documents/projects/deadzone/index.html \
+   /Users/lachlanreyes/Documents/projects/Githubpage/deadzone/index.html
+cd /Users/lachlanreyes/Documents/projects/Githubpage
+git add deadzone/index.html
+git commit -m "Sync DEADZONE: <one-line summary of what changed>"
+git push
+```
+
+Single-file project — no other assets need to come along (no `CLAUDE.md`, no node_modules, etc.). The portfolio's own `index.html` already links to `deadzone/index.html` so a fresh `cp` is enough; only edit the portfolio's `index.html` when adding new projects or restructuring the page.
+
+Do this **on every game commit**, not in batches — a one-commit lag between deadzone and the portfolio is fine, but a multi-commit lag means the live site silently fails to match what the user just shipped.
+
 ## History of major features (most recent first)
 
 Rebuild as needed from `git log --oneline`. Most recent:
