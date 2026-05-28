@@ -4821,6 +4821,20 @@ function endCurrentWave() {
   if (player.special.waveCrush) {
     player.hp = Math.min(player.maxHp, player.hp + player.special.waveCrush);
   }
+  // Reset cooldowns so the next wave starts with every tool ready. We clear
+  // the "lastUsed" timestamps (cooldowns) but intentionally leave active-effect
+  // timers (rageTimer / bulletTimeTimer / homingBulletsTimer) alone — if the
+  // player popped an ability right before the kill, the effect should still
+  // run to completion.
+  player.lastShot = 0;
+  player.lastSecondary = -10;
+  player.abilityLast = {};
+  cancelBowCharge();
+  if (coopEnabled) {
+    player2.lastShot = 0;
+    player2.lastSecondary = -10;
+  }
+  floaters.push({ x: player.x, y: player.y - 28, text: 'COOLDOWNS RESET', life: 1.6, color: '#7ec8ff' });
   // every wave offers 3 random perks to pick from
   pendingCards = pickThreeUpgrades();
   // Roll the roaming trader's state for the next intermission.
@@ -6425,14 +6439,21 @@ function tryDropGun(z) {
 }
 
 function updatePlayer(dt) {
+  // While the card-picker overlay is up, treat it like a menu: the character
+  // freezes in place — no movement input, no aim-tracking, no held actions.
+  // Other passive timers below (invuln, buffs, etc.) still tick so the player
+  // doesn't get a free permanent shield by stalling on the perk screen.
+  const inOverlay = !!pendingCards;
   let dx = 0, dy = 0;
-  // When co-op is on, arrow keys belong to P2. Single-player keeps arrow
-  // support so anyone who used arrows before still has them.
-  const allowArrows = !coopEnabled;
-  if (keys['KeyW'] || (allowArrows && keys['ArrowUp']))    dy -= 1;
-  if (keys['KeyS'] || (allowArrows && keys['ArrowDown']))  dy += 1;
-  if (keys['KeyA'] || (allowArrows && keys['ArrowLeft']))  dx -= 1;
-  if (keys['KeyD'] || (allowArrows && keys['ArrowRight'])) dx += 1;
+  if (!inOverlay) {
+    // When co-op is on, arrow keys belong to P2. Single-player keeps arrow
+    // support so anyone who used arrows before still has them.
+    const allowArrows = !coopEnabled;
+    if (keys['KeyW'] || (allowArrows && keys['ArrowUp']))    dy -= 1;
+    if (keys['KeyS'] || (allowArrows && keys['ArrowDown']))  dy += 1;
+    if (keys['KeyA'] || (allowArrows && keys['ArrowLeft']))  dx -= 1;
+    if (keys['KeyD'] || (allowArrows && keys['ArrowRight'])) dx += 1;
+  }
   const len = Math.hypot(dx, dy);
   if (len > 0) { dx /= len; dy /= len; }
   const sp = player.speed * (player.buffs.fast > 0 ? 1.5 : 1);
@@ -6475,11 +6496,15 @@ function updatePlayer(dt) {
 // the stat/perk math through tryShootFor — only the spawn position and
 // per-shot cooldown are per-P2.
 function updateP2(dt) {
+  // Card-pick overlay freezes P2 (movement + auto-fire) just like P1.
+  const inOverlay = !!pendingCards;
   let dx = 0, dy = 0;
-  if (keys['ArrowUp'])    dy -= 1;
-  if (keys['ArrowDown'])  dy += 1;
-  if (keys['ArrowLeft'])  dx -= 1;
-  if (keys['ArrowRight']) dx += 1;
+  if (!inOverlay) {
+    if (keys['ArrowUp'])    dy -= 1;
+    if (keys['ArrowDown'])  dy += 1;
+    if (keys['ArrowLeft'])  dx -= 1;
+    if (keys['ArrowRight']) dx += 1;
+  }
   const len = Math.hypot(dx, dy);
   if (len > 0) { dx /= len; dy /= len; }
   const sp = player.speed * (player.buffs.fast > 0 ? 1.5 : 1);
@@ -6494,8 +6519,9 @@ function updateP2(dt) {
       if (player2.buffs[k] < 0) player2.buffs[k] = 0;
     }
   }
-  // Auto-fire — shared helper finds nearest threat + fires through tryShootFor
-  playerAutoShoot(player2, gameTime);
+  // Auto-fire — shared helper finds nearest threat + fires through tryShootFor.
+  // Skip while the card overlay is up so P2 doesn't keep mowing things down.
+  if (!inOverlay) playerAutoShoot(player2, gameTime);
 }
 
 // Shared auto-fire used by P2 (always) and P1 (when the autoShoot toggle is
@@ -12880,21 +12906,25 @@ window.addEventListener('unhandledrejection', (e) => {
 
   document.addEventListener('touchstart', (e) => {
     ensureAudio(); resumeAudio();
+    // While in any menu / card overlay, the in-game touch buttons (stick,
+    // ability, secondary, swap) shouldn't drive the character. The Pause
+    // button stays active so the user can always reach Settings or resume.
+    const inGame = (gameState === 'playing') && !pendingCards;
     for (const t of e.changedTouches) {
       const cx = t.clientX, cy = t.clientY;
-      if (elemHit(vstick, cx, cy)) {
+      if (inGame && elemHit(vstick, cx, cy)) {
         activeTouches.set(t.identifier, 'stick');
         setStick(cx, cy);
       } else if (elemHit(vbtnPause, cx, cy)) {
         activeTouches.set(t.identifier, 'pause');
         handlePauseTouch();
-      } else if (elemHit(vbtnSwap, cx, cy)) {
+      } else if (inGame && elemHit(vbtnSwap, cx, cy)) {
         activeTouches.set(t.identifier, 'swap');
         handleSwapTouch();
-      } else if (elemHit(vbtnAbility, cx, cy)) {
+      } else if (inGame && elemHit(vbtnAbility, cx, cy)) {
         activeTouches.set(t.identifier, 'ability');
         tryActivateSelected();
-      } else if (elemHit(vbtnSecondary, cx, cy)) {
+      } else if (inGame && elemHit(vbtnSecondary, cx, cy)) {
         activeTouches.set(t.identifier, 'secondary');
         const sd = SECONDARIES[player.secondary];
         if (sd && sd.kind === 'charge') startBowCharge();
