@@ -1109,7 +1109,7 @@ const PETS = {
   // a constant energy beam crossing the screen for ~0.6s, then a long
   // recovery before it can fire again. Capstone "save your run" buy.
   dragon: {
-    name: 'Dragon',      color: '#c83020', cost: 9000,
+    name: 'Dragon',      color: '#6a1208', cost: 9000,
     kind: 'beam', speed: 140, dmg: 18, attackCd: 3.5, range: 520,
     keepDistance: 320,                    // stay at standoff range, don't charge
     drawSize: 44,                         // bigger than other pets in-world
@@ -5841,125 +5841,205 @@ function drawPet(id, cx, cy, size, heading = 0) {
       break;
     }
     case 'dragon': {
-      // Larger silhouette than the other pets to sell the "apex" feel.
-      // Wings flap, tail trails, a small flame puff sits at the muzzle (and
-      // grows briefly into a roaring breath right after firing).
-      // Shadow
-      ctx.fillStyle = 'rgba(0,0,0,0.30)';
+      // Hard-angled, dark silhouette to match the game's flat-shaded aesthetic.
+      // Every shape is a polygon (no smooth ellipses except the ground shadow
+      // and the flame halo) so the dragon reads as menacing / jagged instead
+      // of cute. Palette stays in deep blood-red and near-black; the only
+      // bright accent is the eye and the muzzle flame.
+      const dark   = '#1a0408';   // outline / spike fill — almost black
+      const wing   = '#2a0608';   // wing membrane — slightly above body
+      const body   = def.color;   // deep blood red (#6a1208)
+      const accent = '#3a0a08';   // mid-tone for inner shading
+      // Ground shadow
+      ctx.fillStyle = 'rgba(0,0,0,0.35)';
       ctx.beginPath(); ctx.ellipse(0, s * 0.75, s * 1.0, s * 0.22, 0, 0, Math.PI * 2); ctx.fill();
-      // Tail — curved, trailing behind
-      const tailWag = Math.sin(gameTime * 4) * 0.25;
-      ctx.strokeStyle = '#7a1c10';
-      ctx.lineCap = 'round';
-      ctx.lineWidth = s * 0.18;
+
+      // Tail — jagged zig-zag segments instead of a smooth curve
+      const tailWag = Math.sin(gameTime * 4) * 0.18;
+      ctx.fillStyle = dark;
       ctx.beginPath();
-      ctx.moveTo(-s * 0.6, 0);
-      ctx.quadraticCurveTo(-s * 1.1, s * 0.3 + tailWag, -s * 1.35, -s * 0.1 + tailWag);
-      ctx.stroke();
-      ctx.lineCap = 'butt';
-      // Tail spike at the very end
-      ctx.fillStyle = '#3a0a08';
-      ctx.beginPath();
-      ctx.moveTo(-s * 1.35, -s * 0.1 + tailWag);
-      ctx.lineTo(-s * 1.55, -s * 0.25 + tailWag);
-      ctx.lineTo(-s * 1.35, -s * 0.30 + tailWag);
+      ctx.moveTo(-s * 0.55,  s * 0.05);
+      ctx.lineTo(-s * 0.75,  s * 0.20 + tailWag);
+      ctx.lineTo(-s * 0.95, -s * 0.05 + tailWag);
+      ctx.lineTo(-s * 1.20,  s * 0.12 + tailWag);
+      ctx.lineTo(-s * 1.45, -s * 0.15 + tailWag);
+      ctx.lineTo(-s * 1.55, -s * 0.40 + tailWag); // spike tip
+      ctx.lineTo(-s * 1.30, -s * 0.10 + tailWag);
+      ctx.lineTo(-s * 1.05,  s * 0.05 + tailWag);
+      ctx.lineTo(-s * 0.80,  s * 0.00 + tailWag);
+      ctx.lineTo(-s * 0.55, -s * 0.05);
       ctx.closePath();
       ctx.fill();
-      // Body — long oval
-      ctx.fillStyle = def.color;
+
+      // Body — angular polygon, low-slung
+      ctx.fillStyle = body;
       ctx.beginPath();
-      ctx.ellipse(-s * 0.05, 0, s * 0.7, s * 0.4, 0, 0, Math.PI * 2);
+      ctx.moveTo(-s * 0.55, -s * 0.05);
+      ctx.lineTo(-s * 0.30, -s * 0.30);
+      ctx.lineTo( s * 0.05, -s * 0.40);
+      ctx.lineTo( s * 0.30, -s * 0.30);
+      ctx.lineTo( s * 0.55, -s * 0.18);
+      ctx.lineTo( s * 0.55,  s * 0.18);
+      ctx.lineTo( s * 0.30,  s * 0.35);
+      ctx.lineTo(-s * 0.10,  s * 0.40);
+      ctx.lineTo(-s * 0.45,  s * 0.25);
+      ctx.lineTo(-s * 0.55, -s * 0.05);
+      ctx.closePath();
       ctx.fill();
-      ctx.strokeStyle = '#3a0a08';
-      ctx.lineWidth = 1.2;
+      ctx.strokeStyle = dark;
+      ctx.lineWidth = 1.4;
       ctx.stroke();
-      // Back spikes — three small triangles along the spine
-      ctx.fillStyle = '#3a0a08';
-      for (let k = 0; k < 3; k++) {
-        const sx = -s * 0.35 + k * s * 0.25;
+      // Belly darker stripe — adds depth without smoothing
+      ctx.fillStyle = accent;
+      ctx.beginPath();
+      ctx.moveTo(-s * 0.40,  s * 0.18);
+      ctx.lineTo(-s * 0.05,  s * 0.38);
+      ctx.lineTo( s * 0.30,  s * 0.30);
+      ctx.lineTo( s * 0.42,  s * 0.10);
+      ctx.lineTo( s * 0.20,  s * 0.18);
+      ctx.lineTo(-s * 0.10,  s * 0.28);
+      ctx.closePath();
+      ctx.fill();
+
+      // Back spikes — five sharp triangles, alternating heights
+      ctx.fillStyle = dark;
+      const spikeXs = [-s * 0.35, -s * 0.18, s * 0.00, s * 0.18, s * 0.36];
+      const spikeHs = [ 0.55,      0.70,      0.85,    0.65,     0.50    ];
+      for (let k = 0; k < spikeXs.length; k++) {
+        const sx = spikeXs[k];
+        const h = spikeHs[k];
         ctx.beginPath();
-        ctx.moveTo(sx, -s * 0.35);
-        ctx.lineTo(sx + s * 0.08, -s * 0.55);
-        ctx.lineTo(sx + s * 0.16, -s * 0.35);
+        ctx.moveTo(sx,            -s * 0.32);
+        ctx.lineTo(sx + s * 0.05, -s * h);
+        ctx.lineTo(sx + s * 0.12, -s * 0.32);
         ctx.closePath();
         ctx.fill();
       }
-      // Wings — bat-like, flap with gameTime
-      const wing = Math.sin(gameTime * 5) * 0.4;
-      const wingCol = '#8a2018';
-      ctx.fillStyle = wingCol;
-      // back-near wing (smaller, behind body)
+
+      // Wing — angular bat membrane with multiple sharp peaks
+      const wingT = Math.sin(gameTime * 5) * 0.35;
       ctx.save();
-      ctx.translate(-s * 0.1, -s * 0.2);
-      ctx.rotate(-0.4 + wing);
+      ctx.translate(-s * 0.05, -s * 0.25);
+      ctx.rotate(-0.35 + wingT);
+      ctx.fillStyle = wing;
       ctx.beginPath();
-      ctx.moveTo(0, 0);
-      ctx.lineTo(-s * 0.5, -s * 0.55);
-      ctx.lineTo(-s * 0.15, -s * 0.55);
-      ctx.lineTo(0, -s * 0.15);
-      ctx.lineTo(s * 0.15, -s * 0.55);
-      ctx.lineTo(s * 0.5, -s * 0.55);
+      ctx.moveTo( 0,            0);
+      ctx.lineTo(-s * 0.55, -s * 0.30);
+      ctx.lineTo(-s * 0.25, -s * 0.55);  // peak 1
+      ctx.lineTo(-s * 0.10, -s * 0.30);
+      ctx.lineTo( s * 0.00, -s * 0.65);  // peak 2 (tallest)
+      ctx.lineTo( s * 0.15, -s * 0.30);
+      ctx.lineTo( s * 0.30, -s * 0.55);  // peak 3
+      ctx.lineTo( s * 0.50, -s * 0.20);
+      ctx.lineTo( s * 0.20, -s * 0.05);
       ctx.closePath();
       ctx.fill();
-      ctx.strokeStyle = '#3a0a08';
+      ctx.strokeStyle = dark;
+      ctx.lineWidth = 1.2;
+      ctx.stroke();
+      // Wing-finger bones — three thin dark struts radiating from the base
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(0, 0); ctx.lineTo(-s * 0.25, -s * 0.50);
+      ctx.moveTo(0, 0); ctx.lineTo( s * 0.00, -s * 0.60);
+      ctx.moveTo(0, 0); ctx.lineTo( s * 0.30, -s * 0.48);
       ctx.stroke();
       ctx.restore();
-      // Neck + head
-      ctx.fillStyle = def.color;
+
+      // Neck wedge + head — sharp wedge instead of rounded snout
+      ctx.fillStyle = body;
       ctx.beginPath();
-      ctx.moveTo(s * 0.45, -s * 0.15);
-      ctx.lineTo(s * 0.65, -s * 0.35);
-      ctx.lineTo(s * 0.95, -s * 0.25);
-      ctx.lineTo(s * 1.1, 0);
-      ctx.lineTo(s * 0.95, s * 0.18);
-      ctx.lineTo(s * 0.55, s * 0.15);
+      ctx.moveTo( s * 0.45, -s * 0.18);
+      ctx.lineTo( s * 0.70, -s * 0.38);
+      ctx.lineTo( s * 1.00, -s * 0.32);
+      ctx.lineTo( s * 1.20, -s * 0.10);
+      ctx.lineTo( s * 1.25,  s * 0.05);
+      ctx.lineTo( s * 1.05,  s * 0.22);
+      ctx.lineTo( s * 0.70,  s * 0.22);
+      ctx.lineTo( s * 0.50,  s * 0.10);
       ctx.closePath();
       ctx.fill();
-      ctx.strokeStyle = '#3a0a08';
+      ctx.strokeStyle = dark;
+      ctx.lineWidth = 1.4;
       ctx.stroke();
-      // Horns — two small back-pointing triangles
-      ctx.fillStyle = '#3a0a08';
+
+      // Sharp horns — two backswept dark triangles
+      ctx.fillStyle = dark;
       ctx.beginPath();
-      ctx.moveTo(s * 0.75, -s * 0.30);
-      ctx.lineTo(s * 0.55, -s * 0.55);
-      ctx.lineTo(s * 0.85, -s * 0.35);
+      ctx.moveTo( s * 0.78, -s * 0.36);
+      ctx.lineTo( s * 0.50, -s * 0.68);
+      ctx.lineTo( s * 0.88, -s * 0.42);
       ctx.closePath();
       ctx.fill();
       ctx.beginPath();
-      ctx.moveTo(s * 0.85, -s * 0.28);
-      ctx.lineTo(s * 0.72, -s * 0.50);
-      ctx.lineTo(s * 0.95, -s * 0.30);
+      ctx.moveTo( s * 0.90, -s * 0.34);
+      ctx.lineTo( s * 0.72, -s * 0.62);
+      ctx.lineTo( s * 0.98, -s * 0.38);
       ctx.closePath();
       ctx.fill();
-      // Eye — glowing yellow with dark pupil
-      ctx.fillStyle = '#ffe066';
-      ctx.beginPath(); ctx.arc(s * 0.85, -s * 0.10, s * 0.08, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = '#1a1a1a';
-      ctx.beginPath(); ctx.arc(s * 0.88, -s * 0.10, s * 0.035, 0, Math.PI * 2); ctx.fill();
-      // Mouth slit
-      ctx.strokeStyle = '#3a0a08';
-      ctx.lineWidth = 1.2;
+      // Cheek spike
       ctx.beginPath();
-      ctx.moveTo(s * 0.95, s * 0.05);
-      ctx.lineTo(s * 1.1, s * 0.0);
-      ctx.stroke();
-      // Persistent small flame puff at the muzzle. Per the CLAUDE.md
-      // addColorStop pitfall, every stop is a hex color (no rgba) — iOS
-      // Safari has gotten weird about non-hex color stops in past bugs.
-      const pulse = 1 + Math.sin(gameTime * 12) * 0.25;
-      const fx = s * 1.18, fy = s * 0.02;
-      const halo = ctx.createRadialGradient(fx, fy, 1, fx, fy, s * 0.30 * pulse);
-      halo.addColorStop(0,    '#ffd166');
-      halo.addColorStop(0.45, '#ff7030');
-      halo.addColorStop(1,    '#3a0a08'); // dark red — fades into the dragon's body color
+      ctx.moveTo( s * 0.95,  s * 0.18);
+      ctx.lineTo( s * 0.80,  s * 0.38);
+      ctx.lineTo( s * 1.05,  s * 0.22);
+      ctx.closePath();
+      ctx.fill();
+
+      // Eye socket (dark cavity) + glowing red pupil
+      ctx.fillStyle = dark;
+      ctx.beginPath();
+      ctx.moveTo( s * 0.92, -s * 0.20);
+      ctx.lineTo( s * 1.08, -s * 0.14);
+      ctx.lineTo( s * 1.00, -s * 0.04);
+      ctx.lineTo( s * 0.86, -s * 0.10);
+      ctx.closePath();
+      ctx.fill();
+      const eyePulse = 0.85 + Math.sin(gameTime * 6) * 0.15;
+      ctx.fillStyle = '#ff2020';
+      ctx.beginPath();
+      ctx.arc(s * 0.97, -s * 0.12, s * 0.05 * eyePulse, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#ffd0d0';
+      ctx.beginPath();
+      ctx.arc(s * 0.97, -s * 0.12, s * 0.02, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Mouth slit + visible fangs (bone white, sharp triangles)
+      ctx.fillStyle = dark;
+      ctx.beginPath();
+      ctx.moveTo(s * 1.00,  s * 0.04);
+      ctx.lineTo(s * 1.22,  s * 0.00);
+      ctx.lineTo(s * 1.20,  s * 0.10);
+      ctx.lineTo(s * 1.02,  s * 0.12);
+      ctx.closePath();
+      ctx.fill();
+      // Upper fang
+      ctx.fillStyle = '#e8d8c0';
+      ctx.beginPath();
+      ctx.moveTo(s * 1.08, s * 0.06);
+      ctx.lineTo(s * 1.12, s * 0.16);
+      ctx.lineTo(s * 1.15, s * 0.06);
+      ctx.closePath();
+      ctx.fill();
+
+      // Persistent muzzle ember (smaller + dimmer than before — fits the
+      // darker palette while still telegraphing "this thing breathes fire").
+      // Brightens during the channeled beam window via p.beamFlashUntil.
+      const fx = s * 1.30, fy = s * 0.04;
+      const pulse = 1 + Math.sin(gameTime * 12) * 0.20;
+      const r0 = s * 0.22 * pulse;
+      const halo = ctx.createRadialGradient(fx, fy, 1, fx, fy, r0);
+      halo.addColorStop(0,    '#ffce44');
+      halo.addColorStop(0.5,  '#c8401a');
+      halo.addColorStop(1,    dark);
       ctx.fillStyle = halo;
       ctx.beginPath();
-      ctx.arc(fx, fy, s * 0.30 * pulse, 0, Math.PI * 2);
+      ctx.arc(fx, fy, r0, 0, Math.PI * 2);
       ctx.fill();
-      // bright inner core
+      // small white-hot core
       ctx.fillStyle = '#fff5d6';
       ctx.beginPath();
-      ctx.arc(fx, fy, s * 0.08 * pulse, 0, Math.PI * 2);
+      ctx.arc(fx, fy, s * 0.06 * pulse, 0, Math.PI * 2);
       ctx.fill();
       break;
     }
