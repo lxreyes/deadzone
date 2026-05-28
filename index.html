@@ -233,6 +233,8 @@ const NOTE_FREQ = {
   'B2': 123.47, 'C3': 130.81, 'D3': 146.83, 'E3': 164.81, 'F3': 174.61, 'G3': 196.00, 'A3': 220.00,
   'B3': 246.94, 'C4': 261.63, 'D4': 293.66, 'E4': 329.63, 'F4': 349.23, 'G4': 392.00, 'A4': 440.00,
   'B4': 493.88, 'C5': 523.25, 'D5': 587.33, 'E5': 659.25, 'F5': 698.46, 'G5': 783.99, 'A5': 880.00,
+  'B5': 987.77, 'C6': 1046.50, 'D6': 1174.66, 'E6': 1318.51, 'F6': 1396.91, 'G6': 1567.98, 'A6': 1760.00,
+  'B6': 1975.53,
 };
 
 // Songs. Each track lists [beatOffset, noteName, durationInBeats] entries.
@@ -260,80 +262,137 @@ const SONG_MENU = {
   ],
 };
 
+// Combat track — significantly more aggressive than the menu loop. 165 BPM,
+// a driving 16th-note bass with octave alternation, a sub-bass holding the
+// root for low-end weight, square + triangle leads doubled an octave apart,
+// and a wide-open drum kit (every-beat kick + ghosts, 16th-note hi-hat,
+// 2-and-4 snare + roll fills, crashes on bar starts). Built so the loop
+// pushes the player rather than humming under them.
 const SONG_COMBAT = {
-  bpm: 140, bars: 8, beatsPerBar: 4, layer: 'combat',
+  bpm: 165, bars: 8, beatsPerBar: 4, layer: 'combat',
   tracks: [
-    // Chugging alternating-octave bass — Am Am G G F F E E (one chord per 2 bars)
-    { kind: 'tone', type: 'sawtooth', vol: 0.32, notes: [
+    // Sub-bass — sine wave on the root of each two-bar chord, held the full
+    // chord. Sits below everything else and gives the saw bass a foundation.
+    { kind: 'tone', type: 'sine', vol: 0.32, notes: [
+      [0,  'A1', 8],   // Am
+      [8,  'G1', 8],   // G
+      [16, 'F1', 8],   // F
+      [24, 'E1', 8],   // E
+    ]},
+    // Saw bass — 16th-note relentless drive. Two beats of root, two of octave
+    // jump, with chromatic walk-ups at the end of each chord region.
+    { kind: 'tone', type: 'sawtooth', vol: 0.30, notes: [
       // Bars 1-2 — Am
-      [0,'A1',0.5],[0.5,'A2',0.5],[1,'A1',0.5],[1.5,'A2',0.5],
-      [2,'A1',0.5],[2.5,'A2',0.5],[3,'A1',0.5],[3.5,'E2',0.5],
-      [4,'A1',0.5],[4.5,'A2',0.5],[5,'A1',0.5],[5.5,'A2',0.5],
-      [6,'A1',0.5],[6.5,'A2',0.5],[7,'A1',0.5],[7.5,'C2',0.5],
+      [0,'A1',0.25],[0.25,'A1',0.25],[0.5,'A2',0.25],[0.75,'A1',0.25],
+      [1,'A1',0.25],[1.25,'A2',0.25],[1.5,'A1',0.25],[1.75,'E2',0.25],
+      [2,'A1',0.25],[2.25,'A1',0.25],[2.5,'A2',0.25],[2.75,'A1',0.25],
+      [3,'A1',0.25],[3.25,'A2',0.25],[3.5,'C2',0.25],[3.75,'E2',0.25],
+      [4,'A1',0.25],[4.25,'A1',0.25],[4.5,'A2',0.25],[4.75,'A1',0.25],
+      [5,'A1',0.25],[5.25,'A2',0.25],[5.5,'A1',0.25],[5.75,'E2',0.25],
+      [6,'A1',0.25],[6.25,'C2',0.25],[6.5,'D2',0.25],[6.75,'E2',0.25],
+      [7,'A1',0.25],[7.25,'C2',0.25],[7.5,'E2',0.25],[7.75,'G2',0.25],
       // Bars 3-4 — G
-      [8,'G1',0.5],[8.5,'G2',0.5],[9,'G1',0.5],[9.5,'G2',0.5],
-      [10,'G1',0.5],[10.5,'G2',0.5],[11,'G1',0.5],[11.5,'D2',0.5],
-      [12,'G1',0.5],[12.5,'G2',0.5],[13,'G1',0.5],[13.5,'G2',0.5],
-      [14,'G1',0.5],[14.5,'G2',0.5],[15,'G1',0.5],[15.5,'B1',0.5],
+      [8,'G1',0.25],[8.25,'G1',0.25],[8.5,'G2',0.25],[8.75,'G1',0.25],
+      [9,'G1',0.25],[9.25,'G2',0.25],[9.5,'G1',0.25],[9.75,'D2',0.25],
+      [10,'G1',0.25],[10.25,'G1',0.25],[10.5,'G2',0.25],[10.75,'G1',0.25],
+      [11,'G1',0.25],[11.25,'G2',0.25],[11.5,'B1',0.25],[11.75,'D2',0.25],
+      [12,'G1',0.25],[12.25,'G1',0.25],[12.5,'G2',0.25],[12.75,'G1',0.25],
+      [13,'G1',0.25],[13.25,'G2',0.25],[13.5,'G1',0.25],[13.75,'D2',0.25],
+      [14,'G1',0.25],[14.25,'B1',0.25],[14.5,'D2',0.25],[14.75,'B1',0.25],
+      [15,'G1',0.25],[15.25,'B1',0.25],[15.5,'D2',0.25],[15.75,'F2',0.25],
       // Bars 5-6 — F
-      [16,'F1',0.5],[16.5,'F2',0.5],[17,'F1',0.5],[17.5,'F2',0.5],
-      [18,'F1',0.5],[18.5,'F2',0.5],[19,'F1',0.5],[19.5,'C2',0.5],
-      [20,'F1',0.5],[20.5,'F2',0.5],[21,'F1',0.5],[21.5,'F2',0.5],
-      [22,'F1',0.5],[22.5,'F2',0.5],[23,'F1',0.5],[23.5,'A1',0.5],
+      [16,'F1',0.25],[16.25,'F1',0.25],[16.5,'F2',0.25],[16.75,'F1',0.25],
+      [17,'F1',0.25],[17.25,'F2',0.25],[17.5,'F1',0.25],[17.75,'C2',0.25],
+      [18,'F1',0.25],[18.25,'F1',0.25],[18.5,'F2',0.25],[18.75,'F1',0.25],
+      [19,'F1',0.25],[19.25,'F2',0.25],[19.5,'A1',0.25],[19.75,'C2',0.25],
+      [20,'F1',0.25],[20.25,'F1',0.25],[20.5,'F2',0.25],[20.75,'F1',0.25],
+      [21,'F1',0.25],[21.25,'F2',0.25],[21.5,'F1',0.25],[21.75,'C2',0.25],
+      [22,'F1',0.25],[22.25,'A1',0.25],[22.5,'C2',0.25],[22.75,'A1',0.25],
+      [23,'F1',0.25],[23.25,'A1',0.25],[23.5,'C2',0.25],[23.75,'E2',0.25],
       // Bars 7-8 — E + climbing turnaround
-      [24,'E1',0.5],[24.5,'E2',0.5],[25,'E1',0.5],[25.5,'E2',0.5],
-      [26,'E1',0.5],[26.5,'E2',0.5],[27,'E1',0.5],[27.5,'B1',0.5],
-      [28,'E1',0.5],[28.5,'G1',0.5],[29,'A1',0.5],[29.5,'B1',0.5],
-      [30,'C2',0.5],[30.5,'E2',0.5],[31,'G2',0.5],[31.5,'A2',0.5],
+      [24,'E1',0.25],[24.25,'E1',0.25],[24.5,'E2',0.25],[24.75,'E1',0.25],
+      [25,'E1',0.25],[25.25,'E2',0.25],[25.5,'E1',0.25],[25.75,'B1',0.25],
+      [26,'E1',0.25],[26.25,'G1',0.25],[26.5,'A1',0.25],[26.75,'B1',0.25],
+      [27,'C2',0.25],[27.25,'D2',0.25],[27.5,'E2',0.25],[27.75,'G2',0.25],
+      [28,'A1',0.25],[28.25,'C2',0.25],[28.5,'E2',0.25],[28.75,'G2',0.25],
+      [29,'A2',0.25],[29.25,'G2',0.25],[29.5,'E2',0.25],[29.75,'C2',0.25],
+      [30,'A1',0.25],[30.25,'B1',0.25],[30.5,'C2',0.25],[30.75,'D2',0.25],
+      [31,'E2',0.25],[31.25,'G2',0.25],[31.5,'A2',0.25],[31.75,'B2',0.25],
     ]},
-    // Square lead — minor riff that follows the chord changes
-    { kind: 'tone', type: 'square', vol: 0.17, notes: [
-      // bar 3
-      [8, 'A4', 1], [9, 'C5', 1], [10, 'E5', 2],
-      // bar 4
-      [12, 'D5', 1], [13, 'C5', 1], [14, 'B4', 1], [15, 'A4', 1],
-      // bar 5
-      [16, 'E5', 1], [17, 'G5', 1], [18, 'F5', 2],
-      // bar 6
-      [20, 'D5', 1], [21, 'C5', 1], [22, 'B4', 2],
-      // bar 7 — start climb
-      [24, 'A4', 0.5], [24.5, 'C5', 0.5], [25, 'E5', 0.5], [25.5, 'G5', 0.5],
-      [26, 'A5', 2],
-      // bar 8 — resolve
-      [28, 'B4', 0.5], [28.5, 'C5', 0.5], [29, 'E5', 0.5], [29.5, 'G5', 0.5],
-      [30, 'A4', 2],
+    // Square lead — denser minor riff. Comes in earlier (bar 1) so the loop
+    // never feels empty, and answers itself across each chord region.
+    { kind: 'tone', type: 'square', vol: 0.20, notes: [
+      // bar 1-2 — Am hook
+      [0, 'A4', 0.5], [0.5, 'C5', 0.5], [1, 'E5', 1], [2, 'D5', 0.5], [2.5, 'C5', 0.5], [3, 'B4', 1],
+      [4, 'A4', 0.5], [4.5, 'C5', 0.5], [5, 'E5', 1], [6, 'G5', 1], [7, 'A5', 1],
+      // bar 3-4 — G answer
+      [8, 'B4', 0.5], [8.5, 'D5', 0.5], [9, 'G5', 1], [10, 'F5', 0.5], [10.5, 'E5', 0.5], [11, 'D5', 1],
+      [12, 'B4', 0.5], [12.5, 'D5', 0.5], [13, 'G5', 1], [14, 'A5', 1], [15, 'B5', 1],
+      // bar 5-6 — F
+      [16, 'A4', 0.5], [16.5, 'C5', 0.5], [17, 'F5', 1], [18, 'E5', 0.5], [18.5, 'D5', 0.5], [19, 'C5', 1],
+      [20, 'A4', 0.5], [20.5, 'C5', 0.5], [21, 'F5', 1], [22, 'A5', 2],
+      // bar 7-8 — E climb + release
+      [24, 'E4', 0.25], [24.25, 'G4', 0.25], [24.5, 'B4', 0.25], [24.75, 'E5', 0.25],
+      [25, 'G5', 0.5], [25.5, 'A5', 0.5], [26, 'B5', 1.5], [27.5, 'A5', 0.5],
+      [28, 'G5', 0.5], [28.5, 'F5', 0.5], [29, 'E5', 0.5], [29.5, 'D5', 0.5],
+      [30, 'C5', 0.5], [30.5, 'B4', 0.5], [31, 'A4', 1],
     ]},
-    // Lead harmony — same riff one octave up on triangle for thickness/drama
-    { kind: 'tone', type: 'triangle', vol: 0.10, notes: [
-      [8, 'A5', 1], [9, 'C6', 1], [10, 'E6', 2],
-      [12, 'D6', 1], [13, 'C6', 1], [14, 'B5', 1], [15, 'A5', 1],
-      [16, 'E6', 1], [17, 'G6', 1], [18, 'F6', 2],
-      [20, 'D6', 1], [21, 'C6', 1], [22, 'B5', 2],
-      [24, 'A5', 0.5], [24.5, 'C6', 0.5], [25, 'E6', 0.5], [25.5, 'G6', 0.5],
-      [26, 'A6', 2],
-      [28, 'B5', 0.5], [28.5, 'C6', 0.5], [29, 'E6', 0.5], [29.5, 'G6', 0.5],
-      [30, 'A5', 2],
+    // Lead harmony — triangle doubling one octave up. Adds that screaming
+    // metal-lead sparkle without doubling oscillator count via square.
+    { kind: 'tone', type: 'triangle', vol: 0.12, notes: [
+      [0, 'A5', 0.5], [0.5, 'C6', 0.5], [1, 'E6', 1], [2, 'D6', 0.5], [2.5, 'C6', 0.5], [3, 'B5', 1],
+      [4, 'A5', 0.5], [4.5, 'C6', 0.5], [5, 'E6', 1], [6, 'G6', 1], [7, 'A6', 1],
+      [8, 'B5', 0.5], [8.5, 'D6', 0.5], [9, 'G6', 1], [10, 'F6', 0.5], [10.5, 'E6', 0.5], [11, 'D6', 1],
+      [12, 'B5', 0.5], [12.5, 'D6', 0.5], [13, 'G6', 1], [14, 'A6', 1], [15, 'B6', 1],
+      [16, 'A5', 0.5], [16.5, 'C6', 0.5], [17, 'F6', 1], [18, 'E6', 0.5], [18.5, 'D6', 0.5], [19, 'C6', 1],
+      [20, 'A5', 0.5], [20.5, 'C6', 0.5], [21, 'F6', 1], [22, 'A6', 2],
+      [24, 'E5', 0.25], [24.25, 'G5', 0.25], [24.5, 'B5', 0.25], [24.75, 'E6', 0.25],
+      [25, 'G6', 0.5], [25.5, 'A6', 0.5], [26, 'B6', 1.5], [27.5, 'A6', 0.5],
+      [28, 'G6', 0.5], [28.5, 'F6', 0.5], [29, 'E6', 0.5], [29.5, 'D6', 0.5],
+      [30, 'C6', 0.5], [30.5, 'B5', 0.5], [31, 'A5', 1],
     ]},
-    // String pad — sustained chord triads moving with the bass progression
-    // Am (bars 1-2) → G (3-4) → F (5-6) → E (7-8). Slow attack via the envelope.
-    { kind: 'tone', type: 'triangle', vol: 0.11, notes: [
+    // String pad — sustained triad through each chord region. Slightly hotter
+    // mix than the calm song so it cuts through the busy bass.
+    { kind: 'tone', type: 'triangle', vol: 0.13, notes: [
       [0, 'A3', 8], [0, 'C4', 8], [0, 'E4', 8],
       [8, 'G3', 8], [8, 'B3', 8], [8, 'D4', 8],
       [16, 'F3', 8], [16, 'A3', 8], [16, 'C4', 8],
       [24, 'E3', 8], [24, 'G3', 8], [24, 'B3', 8],
     ]},
-    // Kick drum — quarter notes on every beat for driving pulse
-    { kind: 'noise', vol: 0.35, lowpass: 220, dur: 0.10,
-      hits: Array.from({length: 32}, (_, i) => i) },
-    // Hi-hat — 8th notes for tension
-    { kind: 'noise', vol: 0.08, hipass: 5000, dur: 0.035,
-      hits: Array.from({length: 64}, (_, i) => i * 0.5) },
-    // Snare-ish crack on beats 2 + 4 of each bar (offbeat backbeat)
-    { kind: 'noise', vol: 0.18, hipass: 1200, lowpass: 6000, dur: 0.08,
-      hits: Array.from({length: 16}, (_, i) => Math.floor(i / 2) * 4 + (i % 2 === 0 ? 1 : 3)) },
-    // Snare roll fills at the end of bars 4 and 8 — punchy phrase markers
-    { kind: 'noise', vol: 0.20, hipass: 1500, lowpass: 5000, dur: 0.045,
-      hits: [15, 15.25, 15.5, 15.75, 31, 31.25, 31.5, 31.75] },
+    // Kick — every beat + ghost on the "and of 4" for forward motion
+    { kind: 'noise', vol: 0.40, lowpass: 220, dur: 0.09,
+      hits: [
+        0, 1, 2, 3,  3.5,
+        4, 5, 6, 7,  7.5,
+        8, 9, 10, 11, 11.5,
+        12, 13, 14, 15, 15.5,
+        16, 17, 18, 19, 19.5,
+        20, 21, 22, 23, 23.5,
+        24, 25, 26, 27, 27.5,
+        28, 29, 30, 31, 31.5,
+      ] },
+    // Hi-hat — 16th notes. Tight and bright (high-passed) — drives tension.
+    { kind: 'noise', vol: 0.07, hipass: 5800, dur: 0.022,
+      hits: Array.from({length: 128}, (_, i) => i * 0.25) },
+    // Open-hat accent on the "and" of beat 2 and 4 each bar for groove
+    { kind: 'noise', vol: 0.10, hipass: 4200, dur: 0.10,
+      hits: Array.from({length: 16}, (_, i) =>
+        Math.floor(i / 2) * 4 + (i % 2 === 0 ? 1.5 : 3.5)
+      ) },
+    // Snare — 2 + 4 backbeat with a touch more low-end than the menu's
+    { kind: 'noise', vol: 0.22, hipass: 1200, lowpass: 6800, dur: 0.075,
+      hits: Array.from({length: 16}, (_, i) =>
+        Math.floor(i / 2) * 4 + (i % 2 === 0 ? 1 : 3)
+      ) },
+    // Snare roll fills at the end of bars 4 and 8 (32nd-note phrase markers)
+    { kind: 'noise', vol: 0.24, hipass: 1500, lowpass: 5200, dur: 0.04,
+      hits: [
+        15, 15.125, 15.25, 15.375, 15.5, 15.625, 15.75, 15.875,
+        31, 31.125, 31.25, 31.375, 31.5, 31.625, 31.75, 31.875,
+      ] },
+    // Crash cymbal on bar 1 + bar 5 — big sweep up the bar
+    { kind: 'noise', vol: 0.16, hipass: 3000, dur: 0.55,
+      hits: [0, 16] },
   ],
 };
 
@@ -353,13 +412,15 @@ function ensureMusic() {
   menuLP.connect(musicMenuGain);
   musicMenuLayer = menuLP;
 
-  // Combat layer: more aggressive lowpass to keep the saw bass tight
+  // Combat layer: cutoff opened so the new track's crash cymbals, 16th-note
+  // hi-hats, and square-lead harmonics actually punch through. The old
+  // 1600 Hz cutoff muffled the intensity — 4500 Hz lets the highs sparkle.
   musicCombatGain = audioCtx.createGain();
   musicCombatGain.gain.value = 0;
   musicCombatGain.connect(musicMaster);
   const combatLP = audioCtx.createBiquadFilter();
   combatLP.type = 'lowpass';
-  combatLP.frequency.value = 1600;
+  combatLP.frequency.value = 4500;
   combatLP.connect(musicCombatGain);
   musicCombatLayer = combatLP;
 }
