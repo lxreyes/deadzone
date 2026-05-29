@@ -869,8 +869,8 @@ const WEAPONS = {
   // at very high speed (pierces everything) and explodes any zombie it kills
   // into a small sauce hazard.
   noodle:  { name: 'Spaghetti Beam',  shots: 1, spread: 0.0, damage: 4.0, fireRate: 0.4, bulletSpeed: 6.0, pierce: 99, life: 0.6, color: '#ff5050', tag: 'N', traderOnly: true,
-             bulletKind: 'laser', explodesIntoSauce: true, lockedRate: true,
-             desc: 'Heavy sniper-beam · fixed ~2.5s cooldown (no upgrades) · pierces · sauce splat on kill' },
+             bulletKind: 'noodle', explodesIntoSauce: true, lockedRate: true,
+             desc: 'Heavy spaghetti volley · fixed ~2.5s cooldown · pierces · sauce splat on kill' },
   // ---- Food Trader exclusives ----
   // Cheaper / weaker than the main trader's gag guns. The Food Trader visits
   // more often and stays for 5 waves so these are the easier-access novelty
@@ -3181,6 +3181,66 @@ function drawBullet(b) {
       ctx.lineWidth = 1.5;
       ctx.beginPath(); ctx.arc(b.targetX, b.targetY, ringR, 0, Math.PI * 2); ctx.stroke();
     }
+    return;
+  }
+  if (b.bulletKind === 'noodle') {
+    // Spaghetti — a wiggling bundle of yellow noodle strands with red sauce
+    // smear underneath and a few sauce splats sprinkled along. Replaces the
+    // generic 'laser' render for the Spaghetti Beam so the projectile reads
+    // as actual pasta instead of a sci-fi energy beam.
+    const ang = Math.atan2(b.vy, b.vx);
+    const sp = Math.hypot(b.vx, b.vy);
+    const len = Math.min(90, sp * 0.035);
+    ctx.save();
+    ctx.translate(b.x, b.y);
+    ctx.rotate(ang);
+    // Sauce smear behind the bundle — soft red halo
+    ctx.strokeStyle = 'rgba(207, 42, 24, 0.40)';
+    ctx.lineCap = 'round';
+    ctx.lineWidth = 8;
+    ctx.beginPath(); ctx.moveTo(-len, 0); ctx.lineTo(4, 0); ctx.stroke();
+    // Three wiggling noodle strands, each phase-shifted
+    const t = gameTime * 14 + b.x * 0.05;
+    ctx.lineCap = 'round';
+    ctx.lineWidth = 1.6;
+    for (let strand = 0; strand < 3; strand++) {
+      const phase = strand * 1.6;
+      const yOff = (strand - 1) * 1.5;
+      ctx.strokeStyle = strand === 1 ? '#ffe690' : '#ffd966';
+      ctx.beginPath();
+      const segs = 10;
+      for (let i = 0; i <= segs; i++) {
+        const sx = -len + (len + 4) * (i / segs);
+        const wave = Math.sin(t + i * 0.7 + phase) * 1.8;
+        const sy = yOff + wave;
+        if (i === 0) ctx.moveTo(sx, sy);
+        else ctx.lineTo(sx, sy);
+      }
+      ctx.stroke();
+    }
+    // Bright highlight strand on top — adds a sense of motion
+    ctx.strokeStyle = '#fff5b8';
+    ctx.lineWidth = 0.8;
+    ctx.beginPath();
+    const segs = 10;
+    for (let i = 0; i <= segs; i++) {
+      const sx = -len + (len + 4) * (i / segs);
+      const wave = Math.sin(t + i * 0.7) * 1.4;
+      if (i === 0) ctx.moveTo(sx, wave);
+      else ctx.lineTo(sx, wave);
+    }
+    ctx.stroke();
+    // A few red sauce splats sprinkled along the bundle
+    ctx.fillStyle = '#cf2a18';
+    for (let k = 0; k < 3; k++) {
+      const sx = -len * (0.20 + k * 0.30);
+      const sy = Math.sin(t * 0.7 + k * 2.1) * 2.5;
+      ctx.beginPath();
+      ctx.arc(sx, sy, 1.4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.lineCap = 'butt';
+    ctx.restore();
     return;
   }
   if (b.bulletKind === 'laser') {
