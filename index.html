@@ -4966,6 +4966,63 @@ function updateArenaEvent(dt) {
 // boss-rush banner is shown for a few seconds when it fires.
 let bossRushBanner = 0; // game-time when banner should disappear
 
+// ---------- Shop-camping shame ----------
+// If P1 sits inside the shop rect for an extremely long time WHILE a wave is
+// actively running, pop a deadpan banner shaming them (with a small "sorry
+// if you weren't camping" apology underneath). State lives here so all the
+// gates (begin/end wave, hardReset, in-shop edge transitions) can reach it.
+const SHAME_THRESHOLD_SEC = 45;     // continuous shop-camping seconds before the banner
+const SHAME_BANNER_LIFE   = 5.0;    // total banner duration incl. fades
+let shopCampTimer = 0;              // seconds accumulated continuously inside the shop
+let shameBannerLife = 0;            // remaining banner display time (counts down)
+let shameFiredThisWave = false;     // hard cap: at most once per wave
+let shameFiredThisSession = false;  // once per continuous in-shop session
+let wasInShopLastFrame = false;     // edge-detect inShop() flips
+
+function triggerShameBanner() {
+  shameBannerLife = SHAME_BANNER_LIFE;
+  shameFiredThisWave = true;
+  shameFiredThisSession = true;
+}
+
+function updateShameTimer(dt) {
+  // Banner display countdown runs independently of the camp timer so the
+  // banner can fade out gracefully even if the wave ends mid-fade.
+  if (shameBannerLife > 0) {
+    shameBannerLife = Math.max(0, shameBannerLife - dt);
+  }
+  // Hard gates — every "not really fighting" condition resets the camp timer
+  // and short-circuits accumulation.
+  const inGame =
+    gameState === 'playing' &&
+    !pendingCards &&
+    !resetConfirm &&
+    !trainingMode &&
+    !guidedActive &&
+    intermission <= 0 &&
+    wave >= 1 &&
+    bossRushBanner <= gameTime;
+  const inShopNow = inGame && inShop();
+  // Edge: left the shop (or any gate fell) → reset both the accumulator and
+  // the per-session "already shamed" flag so a fresh entry re-arms the joke.
+  if (wasInShopLastFrame && !inShopNow) {
+    shopCampTimer = 0;
+    shameFiredThisSession = false;
+  }
+  wasInShopLastFrame = inShopNow;
+  if (!inShopNow) return;
+  // Accumulate continuous shop time.
+  shopCampTimer += dt;
+  // Trigger when we cross the threshold, but only once per wave AND once per session.
+  if (
+    !shameFiredThisWave &&
+    !shameFiredThisSession &&
+    shopCampTimer >= SHAME_THRESHOLD_SEC
+  ) {
+    triggerShameBanner();
+  }
+}
+
 function spawnBossRush() {
   // Spread the 5 bosses across different edge spawn points so they don't
   // cluster on top of each other / instantly overlap the player.
@@ -4983,6 +5040,11 @@ function beginNextWave() {
   bestWave = Math.max(bestWave, wave);
   // Battle Cry — start every wave with a one-hit shield
   if (player.special.battleCry) player.buffs.shield = 1;
+  // Reset shop-camping state for the new wave — fresh wave = fresh chance
+  // to be shamed (or to avoid shame entirely by, you know, fighting).
+  shameFiredThisWave = false;
+  shameFiredThisSession = false;
+  shopCampTimer = 0;
   isBossWave = (wave % 20 === 0);
   if (isBossWave) {
     waveZombiesToSpawn = 0;
@@ -8093,6 +8155,13 @@ function hardReset() {
   gameTime = 0;
   wave = 0; isBossWave = false; waveZombiesToSpawn = 0;
   waveSpawnTimer = 0; intermission = 3;
+  // Banners + shop-camp shame — zero out so a fresh run starts clean
+  bossRushBanner = 0;
+  shameBannerLife = 0;
+  shopCampTimer = 0;
+  shameFiredThisWave = false;
+  shameFiredThisSession = false;
+  wasInShopLastFrame = false;
   // restore upgrade costs
   const base = [25, 35, 45, 55, 90, 18, 28, 32, 70];
   upgrades.forEach((u, i) => u.cost = base[i]);
@@ -9431,6 +9500,7 @@ function render() {
   drawStats();
   drawWaveBanner();
   drawBossRushBanner();
+  drawShameBanner();
   drawGuidedTutorialBanner();
   drawPauseButton();
   drawCheats();
@@ -11928,6 +11998,45 @@ function drawBossRushBanner() {
   ctx.restore();
 }
 
+// Shop-camping shame banner — deadpan headline + small apology subtitle.
+// Mirrors drawBossRushBanner: deadline-gated alpha (fade-in/hold/fade-out),
+// non-modal, drawn in HUD-screen space (after the world transform restored).
+function drawShameBanner() {
+  if (shameBannerLife <= 0) return;
+  // Fade in over the first 0.6s, hold, fade out over the last 1.2s.
+  let alpha = 1;
+  const elapsed = SHAME_BANNER_LIFE - shameBannerLife;
+  if (elapsed < 0.6) alpha = elapsed / 0.6;
+  else if (shameBannerLife < 1.2) alpha = shameBannerLife / 1.2;
+  alpha = Math.max(0, Math.min(1, alpha));
+  const cx = W / 2;
+  const cy = Math.floor(H * 0.38); // above middle, below wave / boss bar
+  ctx.save();
+  // Stacked dim panels behind the text — deep crimson over near-black so the
+  // shame reads as "you're in trouble" without competing with the existing
+  // boss-rush red.
+  ctx.fillStyle = `rgba(60, 0, 0, ${0.40 * alpha})`;
+  ctx.fillRect(0, cy - 60, W, 130);
+  ctx.fillStyle = `rgba(0, 0, 0, ${0.55 * alpha})`;
+  ctx.fillRect(0, cy - 44, W, 96);
+  ctx.translate(cx, cy);
+  ctx.textAlign = 'center';
+  // Glowy red headline — slightly smaller than BOSS RUSH so the two visual
+  // weights stay distinct if they ever overlap (boss rush wins).
+  ctx.shadowColor = `rgba(255, 80, 80, ${alpha})`;
+  ctx.shadowBlur = 22;
+  ctx.fillStyle = `rgba(255, 110, 110, ${alpha})`;
+  ctx.font = 'bold 44px system-ui';
+  ctx.fillText('YOU SHOULD BE ASHAMED', 0, 0);
+  ctx.shadowBlur = 0;
+  // Tiny apology subtitle in light grey italic
+  ctx.fillStyle = `rgba(210, 210, 220, ${0.85 * alpha})`;
+  ctx.font = 'italic 14px system-ui';
+  ctx.fillText('(sorry if you were not camping)', 0, 26);
+  ctx.restore();
+  ctx.textAlign = 'left';
+}
+
 function drawHud() {
   // HP
   const hpW = 220, hpH = 14;
@@ -13308,6 +13417,7 @@ function tickBody() {
     updateDecals(dt);
     updateTooltips(dt);
     updateWave(dt);
+    updateShameTimer(dt);
     updateGuidedTutorial();
     // decay visual effects only while playing
     if (shakeAmt > 0) {
