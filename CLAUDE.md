@@ -8,10 +8,11 @@ Open `index.html` in any modern browser (double-click, or `open index.html` on m
 
 ## Files
 
-- `index.html` — **everything**: HTML scaffold, CSS, and one inline `<script>` block (~11.6k lines). Treat this as the entire project.
+- `index.html` — **everything for the game**: HTML scaffold, CSS, and one inline `<script>` block (~11.6k lines). Treat this as the entire game.
 - `CLAUDE.md` — this file. Treated as a **living doc** — update it after shipping non-trivial features (see "Keeping this file current" at the bottom).
+- `desktop/` — **Electron shell** that packages `index.html` into a downloadable desktop app (Windows / macOS / Linux) for itch.io and Steam distribution. See [`desktop/README.md`](desktop/README.md). The wrapper is intentionally kept ISOLATED: it references `../index.html` at build time and never modifies it, so the "web game is a single file" invariant still holds. Don't move game code into `desktop/` — it's a shell only.
 
-There are no other source files, configs, or dependencies. The user prefers it stay that way — keep new features in the same file unless they explicitly ask to split.
+There are no other source files, configs, or dependencies **for the game itself**. The user prefers it stay that way — keep new game features inside `index.html` unless they explicitly ask to split.
 
 ## Controls (player-facing)
 

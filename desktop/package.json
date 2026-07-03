@@ -1,0 +1,73 @@
+{
+  "name": "deadzone-desktop",
+  "productName": "DEADZONE",
+  "version": "0.1.0",
+  "description": "Top-down, wave-based zombie survival shooter — desktop shell",
+  "main": "main.js",
+  "author": {
+    "name": "Lachlan Reyes"
+  },
+  "license": "UNLICENSED",
+  "private": true,
+  "homepage": "https://lxreyes.github.io/deadzone/",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder",
+    "build:win": "electron-builder --win",
+    "build:mac": "electron-builder --mac",
+    "build:linux": "electron-builder --linux"
+  },
+  "devDependencies": {
+    "electron": "^32.0.0",
+    "electron-builder": "^25.0.5"
+  },
+  "build": {
+    "appId": "com.lxreyes.deadzone",
+    "productName": "DEADZONE",
+    "asar": true,
+    "files": [
+      "main.js",
+      "preload.js",
+      {
+        "from": "..",
+        "to": ".",
+        "filter": ["index.html"]
+      }
+    ],
+    "directories": {
+      "output": "dist",
+      "buildResources": "resources"
+    },
+    "win": {
+      "target": [
+        { "target": "nsis", "arch": ["x64"] },
+        { "target": "portable", "arch": ["x64"] }
+      ],
+      "artifactName": "${productName}-${version}-win-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "mac": {
+      "target": [
+        { "target": "dmg", "arch": ["universal"] },
+        { "target": "zip", "arch": ["universal"] }
+      ],
+      "category": "public.app-category.games",
+      "artifactName": "${productName}-${version}-mac-${arch}.${ext}"
+    },
+    "linux": {
+      "target": [
+        { "target": "AppImage", "arch": ["x64"] },
+        { "target": "tar.gz", "arch": ["x64"] }
+      ],
+      "category": "Game",
+      "artifactName": "${productName}-${version}-linux-${arch}.${ext}"
+    }
+  }
+}
