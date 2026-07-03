@@ -2879,6 +2879,13 @@ function drawBullet(b) {
   // Custom-sprite override — per-bulletKind slot first, then a generic
   // "bulletDefault" fallback. The painted sprite rotates with the bullet's
   // velocity so the silhouette stays oriented correctly.
+  //
+  // IMPORTANT: bulletDefault only applies to bullets with NO bulletKind
+  // (basic weapons — pistol, shotgun, smg, rifle, twin, plus, tesla).
+  // Kind-having bullets fall through to their own procedural render when
+  // their specific slot is empty; otherwise painting bulletDefault (or any
+  // one bullet slot) would surprise-hijack every other kind's render and
+  // read as "I changed one bullet and they all changed".
   const kindSlot = b.bulletKind
     ? 'bullet' + b.bulletKind.charAt(0).toUpperCase() + b.bulletKind.slice(1)
     : null;
@@ -2891,7 +2898,7 @@ function drawBullet(b) {
     ctx.restore();
     return;
   }
-  if (hasCustomSprite('bulletDefault')) {
+  if (!kindSlot && hasCustomSprite('bulletDefault')) {
     const ang = Math.atan2(b.vy, b.vx);
     ctx.save();
     ctx.translate(b.x, b.y);
